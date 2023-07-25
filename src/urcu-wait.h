@@ -1,26 +1,12 @@
+// SPDX-FileCopyrightText: 2012 Mathieu Desnoyers <mathieu.desnoyers@efficios.com>
+//
+// SPDX-License-Identifier: LGPL-2.1-or-later
+
 #ifndef _URCU_WAIT_H
 #define _URCU_WAIT_H
 
 /*
- * urcu-wait.h
- *
  * Userspace RCU library wait/wakeup management
- *
- * Copyright (c) 2012 Mathieu Desnoyers <mathieu.desnoyers@efficios.com>
- *
- * This library is free software; you can redistribute it and/or
- * modify it under the terms of the GNU Lesser General Public
- * License as published by the Free Software Foundation; either
- * version 2.1 of the License, or (at your option) any later version.
- *
- * This library is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
- * Lesser General Public License for more details.
- *
- * You should have received a copy of the GNU Lesser General Public
- * License along with this library; if not, write to the Free Software
- * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA
  */
 
 #include <urcu/assert.h>
@@ -50,7 +36,7 @@ struct urcu_wait_node {
 };
 
 #define URCU_WAIT_NODE_INIT(name, _state)		\
-	{ .state = _state }
+	{ .node = { .next = NULL }, .state = _state }
 
 #define DEFINE_URCU_WAIT_NODE(name, state)		\
 	struct urcu_wait_node name = URCU_WAIT_NODE_INIT(name, state)

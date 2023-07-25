@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2008 Paul E. McKenney, IBM Corporation.
+//
+// SPDX-License-Identifier: GPL-2.0-or-later
+
 /*
  * rcutorture.h: simple user-level performance/stress test of RCU.
  *
@@ -43,22 +47,6 @@
  * line lists the number of readers observing progressively more stale
  * data.  A correct RCU implementation will have all but the first two
  * numbers non-zero.
- *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License as published by
- * the Free Software Foundation; either version 2 of the License, or
- * (at your option) any later version.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
- *
- * You should have received a copy of the GNU General Public License
- * along with this program; if not, write to the Free Software
- * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
- *
- * Copyright (c) 2008 Paul E. McKenney, IBM Corporation.
  */
 
 /*
@@ -67,6 +55,8 @@
 
 #include <stdlib.h>
 #include "tap.h"
+
+#include "urcu-wait.h"
 
 #define NR_TESTS	1
 
@@ -346,35 +336,15 @@ void *rcu_read_stress_test(void *arg __attribute__((unused)))
 	return (NULL);
 }
 
-static pthread_mutex_t call_rcu_test_mutex = PTHREAD_MUTEX_INITIALIZER;
-static pthread_cond_t call_rcu_test_cond = PTHREAD_COND_INITIALIZER;
+static DEFINE_URCU_WAIT_QUEUE(call_rcu_waiters);
 
 static
 void rcu_update_stress_test_rcu(struct rcu_head *head __attribute__((unused)))
 {
-	int ret;
+	struct urcu_waiters waiters;
 
-	ret = pthread_mutex_lock(&call_rcu_test_mutex);
-	if (ret) {
-		errno = ret;
-		diag("pthread_mutex_lock: %s",
-			strerror(errno));
-		abort();
-	}
-	ret = pthread_cond_signal(&call_rcu_test_cond);
-	if (ret) {
-		errno = ret;
-		diag("pthread_cond_signal: %s",
-			strerror(errno));
-		abort();
-	}
-	ret = pthread_mutex_unlock(&call_rcu_test_mutex);
-	if (ret) {
-		errno = ret;
-		diag("pthread_mutex_unlock: %s",
-			strerror(errno));
-		abort();
-	}
+	urcu_move_waiters(&waiters, &call_rcu_waiters);
+	urcu_wake_all_waiters(&waiters);
 }
 
 static
@@ -401,8 +371,14 @@ void *rcu_update_stress_test(void *arg __attribute__((unused)))
 	struct rcu_head rh;
 	enum writer_state writer_state = WRITER_STATE_SYNC_RCU;
 
+	rcu_register_thread();
+
+	/* Offline for poll. */
+	put_thread_offline();
 	while (goflag == GOFLAG_INIT)
 		(void) poll(NULL, 0, 1);
+	put_thread_online();
+
 	while (goflag == GOFLAG_RUN) {
 		i = rcu_stress_idx + 1;
 		if (i >= RCU_STRESS_PIPE_LEN)
@@ -423,64 +399,37 @@ void *rcu_update_stress_test(void *arg __attribute__((unused)))
 			break;
 		case WRITER_STATE_CALL_RCU:
 		{
-			int ret;
+			DEFINE_URCU_WAIT_NODE(wait, URCU_WAIT_WAITING);
 
-			ret = pthread_mutex_lock(&call_rcu_test_mutex);
-			if (ret) {
-				errno = ret;
-				diag("pthread_mutex_lock: %s",
-					strerror(errno));
-				abort();
-			}
-			rcu_register_thread();
+			urcu_wait_add(&call_rcu_waiters, &wait);
+
 			call_rcu(&rh, rcu_update_stress_test_rcu);
-			rcu_unregister_thread();
-			/*
-			 * Our MacOS X test machine with the following
-			 * config:
-			 * 15.6.0 Darwin Kernel Version 15.6.0
-			 * root:xnu-3248.60.10~1/RELEASE_X86_64
-			 * appears to have issues with liburcu-signal
-			 * signal being delivered on top of
-			 * pthread_cond_wait. It seems to make the
-			 * thread continue, and therefore corrupt the
-			 * rcu_head. Work around this issue by
-			 * unregistering the RCU read-side thread
-			 * immediately after call_rcu (call_rcu needs
-			 * us to be registered RCU readers).
-			 */
-			ret = pthread_cond_wait(&call_rcu_test_cond,
-					&call_rcu_test_mutex);
-			if (ret) {
-				errno = ret;
-				diag("pthread_cond_signal: %s",
-					strerror(errno));
-				abort();
-			}
-			ret = pthread_mutex_unlock(&call_rcu_test_mutex);
-			if (ret) {
-				errno = ret;
-				diag("pthread_mutex_unlock: %s",
-					strerror(errno));
-				abort();
-			}
+
+			/* Offline for busy-wait. */
+			put_thread_offline();
+			urcu_adaptative_busy_wait(&wait);
+			put_thread_online();
 			break;
 		}
 		case WRITER_STATE_POLL_RCU:
 		{
 			struct urcu_gp_poll_state poll_state;
 
-			rcu_register_thread();
 			poll_state = start_poll_synchronize_rcu();
-			rcu_unregister_thread();
+
+			/* Offline for poll. */
+			put_thread_offline();
 			while (!poll_state_synchronize_rcu(poll_state))
 				(void) poll(NULL, 0, 1);	/* Wait for 1ms */
+			put_thread_online();
 			break;
 		}
 		}
 		n_updates++;
 		advance_writer_state(&writer_state);
 	}
+
+	rcu_unregister_thread();
 
 	return NULL;
 }
