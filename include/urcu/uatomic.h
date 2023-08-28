@@ -5,9 +5,8 @@
 #ifndef _URCU_UATOMIC_H
 #define _URCU_UATOMIC_H
 
-#include <assert.h>
-
 #include <urcu/arch.h>
+#include <urcu/compiler.h>
 #include <urcu/config.h>
 
 enum cmm_memorder {
@@ -25,14 +24,12 @@ enum cmm_memorder {
 /*
  * Make sure that CMM_SEQ_CST_FENCE is not equivalent to other memory orders.
  */
-# ifdef static_assert
-static_assert(CMM_RELAXED == __ATOMIC_RELAXED, "");
-static_assert(CMM_CONSUME == __ATOMIC_CONSUME, "");
-static_assert(CMM_ACQUIRE == __ATOMIC_ACQUIRE, "");
-static_assert(CMM_RELEASE == __ATOMIC_RELEASE, "");
-static_assert(CMM_ACQ_REL == __ATOMIC_ACQ_REL, "");
-static_assert(CMM_SEQ_CST == __ATOMIC_SEQ_CST, "");
-# endif
+urcu_static_assert(CMM_RELAXED == __ATOMIC_RELAXED, "CMM_RELAXED vs __ATOMIC_RELAXED values mismatch", cmm_relaxed_values_mismatch);
+urcu_static_assert(CMM_CONSUME == __ATOMIC_CONSUME, "CMM_CONSUME vs __ATOMIC_CONSUME values mismatch", cmm_consume_values_mismatch);
+urcu_static_assert(CMM_ACQUIRE == __ATOMIC_ACQUIRE, "CMM_ACQUIRE vs __ATOMIC_ACQUIRE values mismatch", cmm_acquire_values_mismatch);
+urcu_static_assert(CMM_RELEASE == __ATOMIC_RELEASE, "CMM_RELEASE vs __ATOMIC_RELEASE values mismatch", cmm_release_values_mismatch);
+urcu_static_assert(CMM_ACQ_REL == __ATOMIC_ACQ_REL, "CMM_ACQ_REL vs __ATOMIC_ACQ_REL values mismatch", cmm_acq_rel_values_mismatch);
+urcu_static_assert(CMM_SEQ_CST == __ATOMIC_SEQ_CST, "CMM_SEQ_CST vs __ATOMIC_SEQ_CST values mismatch", cmm_seq_cst_values_mismatch);
 
 /*
  * This is not part of the public API. It it used internally to implement the
