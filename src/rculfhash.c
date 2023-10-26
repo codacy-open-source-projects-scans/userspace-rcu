@@ -347,6 +347,11 @@ struct partition_resize_work {
 		    unsigned long start, unsigned long len);
 };
 
+enum nr_cpus_mask_state {
+	NR_CPUS_MASK_INIT_FAILED = -2,
+	NR_CPUS_MASK_UNINITIALIZED = -1,
+};
+
 static struct urcu_workqueue *cds_lfht_workqueue;
 
 /*
@@ -624,7 +629,7 @@ static void mutex_unlock(pthread_mutex_t *mutex)
 		urcu_die(ret);
 }
 
-static long nr_cpus_mask = -1;
+static long nr_cpus_mask = NR_CPUS_MASK_UNINITIALIZED;
 static long split_count_mask = -1;
 static int split_count_order = -1;
 
@@ -634,7 +639,7 @@ static void ht_init_nr_cpus_mask(void)
 
 	maxcpus = get_possible_cpus_array_len();
 	if (maxcpus <= 0) {
-		nr_cpus_mask = -2;
+		nr_cpus_mask = NR_CPUS_MASK_INIT_FAILED;
 		return;
 	}
 	/*
@@ -648,7 +653,7 @@ static void ht_init_nr_cpus_mask(void)
 static
 void alloc_split_items_count(struct cds_lfht *ht)
 {
-	if (nr_cpus_mask == -1)	{
+	if (nr_cpus_mask == NR_CPUS_MASK_UNINITIALIZED)	{
 		ht_init_nr_cpus_mask();
 		if (nr_cpus_mask < 0)
 			split_count_mask = DEFAULT_SPLIT_COUNT_MASK;
@@ -1153,7 +1158,7 @@ int _cds_lfht_del(struct cds_lfht *ht, unsigned long size,
 		struct cds_lfht_node *node)
 {
 	struct cds_lfht_node *bucket, *next;
-	struct cds_lfht_node **node_next;
+	uintptr_t *node_next;
 
 	if (!node)	/* Return -ENOENT if asked to delete NULL node */
 		return -ENOENT;
@@ -1185,7 +1190,7 @@ int _cds_lfht_del(struct cds_lfht *ht, unsigned long size,
 	 * NOTE: The node_next variable is present to avoid breaking
 	 * strict-aliasing rules.
 	 */
-	node_next = &node->next;
+	node_next = (uintptr_t*)&node->next;
 	uatomic_or_mo(node_next, REMOVED_FLAG, CMM_RELEASE);
 
 	/* We performed the (logical) deletion. */
@@ -1241,7 +1246,7 @@ void partition_resize_helper(struct cds_lfht *ht, unsigned long i,
 	unsigned long thread, nr_threads;
 	sigset_t newmask, oldmask;
 
-	urcu_posix_assert(nr_cpus_mask != -1);
+	urcu_posix_assert(nr_cpus_mask != NR_CPUS_MASK_UNINITIALIZED);
 	if (nr_cpus_mask < 0 || len < 2 * MIN_PARTITION_PER_THREAD)
 		goto fallback;
 
@@ -1426,7 +1431,7 @@ void remove_table_partition(struct cds_lfht *ht, unsigned long i,
 	for (j = size + start; j < size + start + len; j++) {
 		struct cds_lfht_node *fini_bucket = bucket_at(ht, j);
 		struct cds_lfht_node *parent_bucket = bucket_at(ht, j - size);
-		struct cds_lfht_node **fini_bucket_next;
+		uintptr_t *fini_bucket_next;
 
 		urcu_posix_assert(j >= size && j < (size << 1));
 		dbg_printf("remove entry: order %lu index %lu hash %lu\n",
@@ -1436,7 +1441,7 @@ void remove_table_partition(struct cds_lfht *ht, unsigned long i,
 		 * NOTE: The fini_bucket_next variable is present to
 		 * avoid breaking strict-aliasing rules.
 		 */
-		fini_bucket_next = &fini_bucket->next;
+		fini_bucket_next = (uintptr_t*)&fini_bucket->next;
 		uatomic_or(fini_bucket_next, REMOVED_FLAG);
 		_cds_lfht_gc_bucket(parent_bucket, fini_bucket);
 	}
