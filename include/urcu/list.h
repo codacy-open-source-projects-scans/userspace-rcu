@@ -88,7 +88,7 @@ void cds_list_move(struct cds_list_head *elem, struct cds_list_head *head)
 
 /* Replace an old entry. */
 static inline
-void cds_list_replace(struct cds_list_head *old, struct cds_list_head *_new)
+void cds_list_replace(const struct cds_list_head *old, struct cds_list_head *_new)
 {
 	_new->next = old->next;
 	_new->prev = old->prev;
@@ -169,7 +169,7 @@ void cds_list_splice(struct cds_list_head *add, struct cds_list_head *head)
                 pos = (p), p = cds_list_entry((pos)->member.next, __typeof__(*(pos)), member))
 
 static inline
-int cds_list_empty(struct cds_list_head *head)
+int cds_list_empty(const struct cds_list_head *head)
 {
 	return head == head->next;
 }
