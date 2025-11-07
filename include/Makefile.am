@@ -64,10 +64,12 @@ nobase_include_HEADERS = \
 	urcu/tls-compat.h \
 	urcu/uatomic/aarch64.h \
 	urcu/uatomic/alpha.h \
+	urcu/uatomic/api.h \
 	urcu/uatomic_arch.h \
 	urcu/uatomic/arm.h \
 	urcu/uatomic/builtins.h \
 	urcu/uatomic/builtins-generic.h \
+	urcu/uatomic/builtins-x86.h \
 	urcu/uatomic/gcc.h \
 	urcu/uatomic/generic.h \
 	urcu/uatomic.h \
@@ -82,6 +84,7 @@ nobase_include_HEADERS = \
 	urcu/uatomic/s390.h \
 	urcu/uatomic/sparc64.h \
 	urcu/uatomic/tile.h \
+	urcu/uatomic/uassert.h \
 	urcu/uatomic/x86.h \
 	urcu/urcu-bp.h \
 	urcu/urcu-futex.h \

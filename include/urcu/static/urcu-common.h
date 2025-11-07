@@ -61,14 +61,14 @@ struct urcu_gp {
 	unsigned long ctr;
 
 	int32_t futex;
-} __attribute__((aligned(CAA_CACHE_LINE_SIZE)));
+} __attribute__((__aligned__(CAA_CACHE_LINE_SIZE)));
 
 struct urcu_reader {
 	/* Data used by both reader and synchronize_rcu() */
 	unsigned long ctr;
 	char need_mb;
 	/* Data used for registry */
-	struct cds_list_head node __attribute__((aligned(CAA_CACHE_LINE_SIZE)));
+	struct cds_list_head node __attribute__((__aligned__(CAA_CACHE_LINE_SIZE)));
 	pthread_t tid;
 	/* Reader registered flag, for internal checks. */
 	unsigned int registered:1;
@@ -79,8 +79,8 @@ struct urcu_reader {
  */
 static inline void urcu_common_wake_up_gp(struct urcu_gp *gp)
 {
-	if (caa_unlikely(uatomic_read(&gp->futex) == -1)) {
-		uatomic_set(&gp->futex, 0);
+	if (caa_unlikely(uatomic_load(&gp->futex) == -1)) {
+		uatomic_store(&gp->futex, 0);
 		/*
 		 * Ignoring return value until we can make this function
 		 * return something (because urcu_die() is not publicly
@@ -101,7 +101,7 @@ static inline enum urcu_state urcu_common_reader_state(struct urcu_gp *gp,
 	 * Make sure both tests below are done on the same version of *value
 	 * to insure consistency.
 	 */
-	v = uatomic_load(ctr, CMM_RELAXED);
+	v = uatomic_load(ctr);
 	cmm_annotate_group_mem_acquire(group, ctr);
 
 	if (!(v & URCU_GP_CTR_NEST_MASK))

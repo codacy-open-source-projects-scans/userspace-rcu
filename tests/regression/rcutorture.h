@@ -161,10 +161,10 @@ void *rcu_read_perf_test(void *arg)
 	run_on(me);
 	uatomic_inc(&nthreadsrunning);
 	put_thread_offline();
-	while (uatomic_read(&goflag) == GOFLAG_INIT)
+	while (uatomic_load(&goflag) == GOFLAG_INIT)
 		(void) poll(NULL, 0, 1);
 	put_thread_online();
-	while (uatomic_read(&goflag) == GOFLAG_RUN) {
+	while (uatomic_load(&goflag) == GOFLAG_RUN) {
 		for (i = 0; i < RCU_READ_RUN; i++) {
 			rcu_read_lock();
 			/* rcu_read_lock_nest(); */
@@ -182,7 +182,7 @@ void *rcu_read_perf_test(void *arg)
 }
 
 static
-void *rcu_update_perf_test(void *arg __attribute__((unused)))
+void *rcu_update_perf_test(void *arg __attribute__((__unused__)))
 {
 	long long n_updates_local = 0;
 
@@ -196,9 +196,9 @@ void *rcu_update_perf_test(void *arg __attribute__((unused)))
 		}
 	}
 	uatomic_inc(&nthreadsrunning);
-	while (uatomic_read(&goflag) == GOFLAG_INIT)
+	while (uatomic_load(&goflag) == GOFLAG_INIT)
 		(void) poll(NULL, 0, 1);
-	while (uatomic_read(&goflag) == GOFLAG_RUN) {
+	while (uatomic_load(&goflag) == GOFLAG_RUN) {
 		synchronize_rcu();
 		n_updates_local++;
 	}
@@ -218,7 +218,7 @@ void perftestinit(void)
 {
 	init_per_thread(n_reads_pt, 0LL);
 	init_per_thread(n_updates_pt, 0LL);
-	uatomic_set(&nthreadsrunning, 0);
+	uatomic_store(&nthreadsrunning, 0);
 }
 
 static
@@ -227,11 +227,11 @@ int perftestrun(int nthreads, int nreaders, int nupdaters)
 	int t;
 	int duration = 1;
 
-	while (uatomic_read(&nthreadsrunning) < nthreads)
+	while (uatomic_load(&nthreadsrunning) < nthreads)
 		(void) poll(NULL, 0, 1);
-	uatomic_set(&goflag, GOFLAG_RUN);
+	uatomic_store(&goflag, GOFLAG_RUN);
 	sleep(duration);
-	uatomic_set(&goflag, GOFLAG_STOP);
+	uatomic_store(&goflag, GOFLAG_STOP);
 	wait_all_threads();
 	for_each_thread(t) {
 		n_reads += per_thread(n_reads_pt, t);
@@ -325,7 +325,7 @@ DEFINE_PER_THREAD(long long [RCU_STRESS_PIPE_LEN + 1], rcu_stress_count);
 int garbage = 0;
 
 static
-void *rcu_read_stress_test(void *arg __attribute__((unused)))
+void *rcu_read_stress_test(void *arg __attribute__((__unused__)))
 {
 	int i;
 	int itercnt = 0;
@@ -334,10 +334,10 @@ void *rcu_read_stress_test(void *arg __attribute__((unused)))
 
 	rcu_register_thread();
 	put_thread_offline();
-	while (uatomic_read(&goflag) == GOFLAG_INIT)
+	while (uatomic_load(&goflag) == GOFLAG_INIT)
 		(void) poll(NULL, 0, 1);
 	put_thread_online();
-	while (uatomic_read(&goflag) == GOFLAG_RUN) {
+	while (uatomic_load(&goflag) == GOFLAG_RUN) {
 		rcu_read_lock();
 		p = rcu_dereference(rcu_stress_current);
 		if (p->mbtest == 0)
@@ -352,7 +352,7 @@ void *rcu_read_stress_test(void *arg __attribute__((unused)))
 		for (i = 0; i < 100; i++)
 			uatomic_inc(&garbage);
 		rcu_read_unlock_nest();
-		pc = uatomic_read(&p->pipe_count);
+		pc = uatomic_load(&p->pipe_count);
 		rcu_read_unlock();
 		if ((pc > RCU_STRESS_PIPE_LEN) || (pc < 0))
 			pc = RCU_STRESS_PIPE_LEN;
@@ -374,7 +374,7 @@ void *rcu_read_stress_test(void *arg __attribute__((unused)))
 static DEFINE_URCU_WAIT_QUEUE(call_rcu_waiters);
 
 static
-void rcu_update_stress_test_rcu(struct rcu_head *head __attribute__((unused)))
+void rcu_update_stress_test_rcu(struct rcu_head *head __attribute__((__unused__)))
 {
 	struct urcu_waiters waiters;
 
@@ -399,7 +399,7 @@ void advance_writer_state(enum writer_state *state)
 }
 
 static
-void *rcu_update_stress_test(void *arg __attribute__((unused)))
+void *rcu_update_stress_test(void *arg __attribute__((__unused__)))
 {
 	int i;
 	struct rcu_stress *p, *old_p;
@@ -410,12 +410,12 @@ void *rcu_update_stress_test(void *arg __attribute__((unused)))
 
 	/* Offline for poll. */
 	put_thread_offline();
-	while (uatomic_read(&goflag) == GOFLAG_INIT)
+	while (uatomic_load(&goflag) == GOFLAG_INIT)
 		(void) poll(NULL, 0, 1);
 	put_thread_online();
 
 	old_p = NULL;
-	while (uatomic_read(&goflag) == GOFLAG_RUN) {
+	while (uatomic_load(&goflag) == GOFLAG_RUN) {
 		i = rcu_stress_idx + 1;
 		if (i >= RCU_STRESS_PIPE_LEN)
 			i = 0;
@@ -493,7 +493,7 @@ void *rcu_update_stress_test(void *arg __attribute__((unused)))
 }
 
 static
-void *rcu_fake_update_stress_test(void *arg __attribute__((unused)))
+void *rcu_fake_update_stress_test(void *arg __attribute__((__unused__)))
 {
 	if (callrcu_type == CALLRCU_PERTHREAD) {
 		struct call_rcu_data *crdp;
@@ -504,9 +504,9 @@ void *rcu_fake_update_stress_test(void *arg __attribute__((unused)))
 			set_thread_call_rcu_data(crdp);
 		}
 	}
-	while (uatomic_read(&goflag) == GOFLAG_INIT)
+	while (uatomic_load(&goflag) == GOFLAG_INIT)
 		(void) poll(NULL, 0, 1);
-	while (uatomic_read(&goflag) == GOFLAG_RUN) {
+	while (uatomic_load(&goflag) == GOFLAG_RUN) {
 		synchronize_rcu();
 		(void) poll(NULL, 0, 1);
 	}
@@ -543,9 +543,9 @@ int stresstest(int nreaders)
 	create_thread(rcu_update_stress_test, NULL);
 	for (i = 0; i < 5; i++)
 		create_thread(rcu_fake_update_stress_test, NULL);
-	uatomic_set(&goflag, GOFLAG_RUN);
+	uatomic_store(&goflag, GOFLAG_RUN);
 	sleep(10);
-	uatomic_set(&goflag, GOFLAG_STOP);
+	uatomic_store(&goflag, GOFLAG_STOP);
 	wait_all_threads();
 	for_each_thread(t)
 		n_reads += per_thread(n_reads_pt, t);

@@ -20,9 +20,19 @@
 extern "C" {
 #endif
 
+/* #define UATOMIC_HAS_ATOMIC_BYTE */
+/* #define UATOMIC_HAS_ATOMIC_SHORT */
+#define UATOMIC_HAS_ATOMIC_INT
+#if (CAA_BITS_PER_LONG == 64)
+#define UATOMIC_HAS_ATOMIC_LLONG
+#endif
+
+/* Must be included after the UATOMIC_HAS_ATOMIC_* defines. */
+#include <urcu/uatomic/uassert.h>
+
 /* cmpxchg */
 
-static inline __attribute__((always_inline))
+static inline __attribute__((__always_inline__))
 unsigned long _uatomic_cmpxchg(void *addr, unsigned long old,
 			      unsigned long _new, int len)
 {
@@ -39,7 +49,7 @@ unsigned long _uatomic_cmpxchg(void *addr, unsigned long old,
 
 		return _new;
 	}
-#if (CAA_BITS_PER_LONG == 64)
+#ifdef UATOMIC_HAS_ATOMIC_LLONG
 	case 8:
 	{
 		__asm__ __volatile__ (
@@ -54,16 +64,19 @@ unsigned long _uatomic_cmpxchg(void *addr, unsigned long old,
 	}
 #endif
 	}
-	__builtin_trap();
 	return 0;
 }
 
 
-#define uatomic_cmpxchg(addr, old, _new)				       \
-	((__typeof__(*(addr))) _uatomic_cmpxchg((addr),			       \
-						caa_cast_long_keep_sign(old),  \
-						caa_cast_long_keep_sign(_new), \
-						sizeof(*(addr))))
+#define uatomic_cmpxchg_mo(addr, old, _new, mos, mof)				\
+	__extension__								\
+	({									\
+		_uatomic_static_assert_atomic(sizeof(*(addr)));			\
+		(__typeof__(*(addr))) _uatomic_cmpxchg((addr),			\
+						caa_cast_long_keep_sign(old),	\
+						caa_cast_long_keep_sign(_new),	\
+						sizeof(*(addr)));		\
+	 })
 
 #ifdef __cplusplus
 }

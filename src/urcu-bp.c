@@ -62,9 +62,9 @@ void *mremap_wrapper(void *old_address, size_t old_size,
  * This is not generic.
 */
 static
-void *mremap_wrapper(void *old_address __attribute__((unused)),
-		size_t old_size __attribute__((unused)),
-		size_t new_size __attribute__((unused)),
+void *mremap_wrapper(void *old_address __attribute__((__unused__)),
+		size_t old_size __attribute__((__unused__)),
+		size_t new_size __attribute__((__unused__)),
 		int flags)
 {
 	urcu_posix_assert(!(flags & MREMAP_MAYMOVE));
@@ -102,11 +102,11 @@ enum membarrier_cmd {
 };
 
 static
-void __attribute__((constructor)) _urcu_bp_init(void);
+void __attribute__((__constructor__)) _urcu_bp_init(void);
 static
 void urcu_bp_exit(void);
 static
-void __attribute__((destructor)) urcu_bp_exit_destructor(void);
+void __attribute__((__destructor__)) urcu_bp_exit_destructor(void);
 static void urcu_call_rcu_exit(void);
 
 #ifndef CONFIG_RCU_FORCE_SYS_MEMBARRIER
@@ -307,13 +307,13 @@ void urcu_bp_synchronize_rcu(void)
 
 	/* Switch parity: 0 -> 1, 1 -> 0 */
 	cmm_annotate_group_mem_release(&release_group, &rcu_gp.ctr);
-	uatomic_store(&rcu_gp.ctr, rcu_gp.ctr ^ URCU_BP_GP_CTR_PHASE, CMM_RELAXED);
+	uatomic_store(&rcu_gp.ctr, rcu_gp.ctr ^ URCU_BP_GP_CTR_PHASE);
 
 	/*
 	 * Must commit qparity update to memory before waiting for other parity
 	 * quiescent state. Failure to do so could result in the writer waiting
 	 * forever while new readers are always accessing data (no progress).
-	 * Ensured by CMM_STORE_SHARED and CMM_LOAD_SHARED.
+	 * Ensured by uatomic_store and uatomic_load.
 	 */
 
 	/*
@@ -409,7 +409,7 @@ void expand_arena(struct registry_arena *arena)
 		new_chunk_size_bytes, 0);
 	if (new_chunk != MAP_FAILED) {
 		/* Should not have moved. */
-		assert(new_chunk == last_chunk);
+		urcu_posix_assert(new_chunk == last_chunk);
 		memset((char *) last_chunk + old_chunk_size_bytes, 0,
 			new_chunk_size_bytes - old_chunk_size_bytes);
 		last_chunk->capacity = new_capacity;
@@ -751,7 +751,7 @@ void *urcu_bp_dereference_sym(void *p)
 void *urcu_bp_set_pointer_sym(void **p, void *v)
 {
 	cmm_wmb();
-	uatomic_set(p, v);
+	uatomic_store(p, v);
 	return v;
 }
 

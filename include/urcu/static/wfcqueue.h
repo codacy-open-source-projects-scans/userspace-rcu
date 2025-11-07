@@ -79,7 +79,7 @@ static inline void _cds_wfcq_node_init(struct cds_wfcq_node *node)
 
 static inline void _cds_wfcq_node_init_atomic(struct cds_wfcq_node *node)
 {
-	uatomic_store(&node->next, NULL, CMM_RELAXED);
+	uatomic_store(&node->next, NULL);
 }
 
 /*
@@ -103,7 +103,7 @@ static inline void _cds_wfcq_init(struct cds_wfcq_head *head,
  * cds_wfcq_init().
  */
 static inline void _cds_wfcq_destroy(struct cds_wfcq_head *head,
-		struct cds_wfcq_tail *tail __attribute__((unused)))
+		struct cds_wfcq_tail *tail __attribute__((__unused__)))
 {
 	int ret = pthread_mutex_destroy(&head->lock);
 	urcu_posix_assert(!ret);
@@ -149,7 +149,7 @@ static inline bool _cds_wfcq_empty(cds_wfcq_head_const_ptr_t u_head,
 }
 
 static inline void _cds_wfcq_dequeue_lock(struct cds_wfcq_head *head,
-		struct cds_wfcq_tail *tail __attribute__((unused)))
+		struct cds_wfcq_tail *tail __attribute__((__unused__)))
 {
 	int ret;
 
@@ -158,7 +158,7 @@ static inline void _cds_wfcq_dequeue_lock(struct cds_wfcq_head *head,
 }
 
 static inline void _cds_wfcq_dequeue_unlock(struct cds_wfcq_head *head,
-		struct cds_wfcq_tail *tail __attribute__((unused)))
+		struct cds_wfcq_tail *tail __attribute__((__unused__)))
 {
 	int ret;
 
@@ -326,7 +326,7 @@ ___cds_wfcq_first_nonblocking(cds_wfcq_head_ptr_t head,
 }
 
 static inline struct cds_wfcq_node *
-___cds_wfcq_next(cds_wfcq_head_ptr_t head __attribute__((unused)),
+___cds_wfcq_next(cds_wfcq_head_ptr_t head __attribute__((__unused__)),
 		struct cds_wfcq_tail *tail,
 		struct cds_wfcq_node *node,
 		int blocking)
@@ -342,7 +342,7 @@ ___cds_wfcq_next(cds_wfcq_head_ptr_t head __attribute__((unused)),
 	 * Load node->next before loading next's content
 	 */
 	if ((next = uatomic_load(&node->next, CMM_CONSUME)) == NULL) {
-		if (uatomic_load(&tail->p, CMM_RELAXED) == node)
+		if (uatomic_load(&tail->p) == node)
 			return NULL;
 		next = ___cds_wfcq_node_sync_next(node, blocking);
 	}
@@ -432,7 +432,7 @@ ___cds_wfcq_dequeue_with_state(cds_wfcq_head_ptr_t u_head,
 		 * (currently NULL) back to its original value.
 		 */
 		if (!blocking && next == CDS_WFCQ_WOULDBLOCK) {
-			uatomic_store(&head->node.next, node, CMM_RELAXED);
+			uatomic_store(&head->node.next, node);
 			return CDS_WFCQ_WOULDBLOCK;
 		}
 	}
@@ -440,7 +440,7 @@ ___cds_wfcq_dequeue_with_state(cds_wfcq_head_ptr_t u_head,
 	/*
 	 * Move queue head forward.
 	 */
-	uatomic_store(&head->node.next, next, CMM_RELAXED);
+	uatomic_store(&head->node.next, next);
 	cmm_emit_legacy_smp_mb();
 
 	return node;

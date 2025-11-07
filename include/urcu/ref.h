@@ -24,7 +24,7 @@ struct urcu_ref {
 
 static inline void urcu_ref_set(struct urcu_ref *ref, long val)
 {
-	uatomic_set(&ref->refcount, val);
+	uatomic_store(&ref->refcount, val);
 }
 
 static inline void urcu_ref_init(struct urcu_ref *ref)
@@ -32,12 +32,12 @@ static inline void urcu_ref_init(struct urcu_ref *ref)
 	urcu_ref_set(ref, 1);
 }
 
-static inline bool  __attribute__((warn_unused_result))
+static inline bool  __attribute__((__warn_unused_result__))
 		urcu_ref_get_safe(struct urcu_ref *ref)
 {
 	long old, _new, res;
 
-	old = uatomic_read(&ref->refcount);
+	old = uatomic_load(&ref->refcount);
 	for (;;) {
 		if (old == LONG_MAX) {
 			return false;	/* Failure. */
@@ -80,7 +80,7 @@ static inline bool urcu_ref_get_unless_zero(struct urcu_ref *ref)
 {
 	long old, _new, res;
 
-	old = uatomic_read(&ref->refcount);
+	old = uatomic_load(&ref->refcount);
 	for (;;) {
 		if (old == 0 || old == LONG_MAX)
 			return false;	/* Failure. */

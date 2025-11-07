@@ -21,6 +21,16 @@
 extern "C" {
 #endif
 
+/* #define UATOMIC_HAS_ATOMIC_BYTE */
+/* #define UATOMIC_HAS_ATOMIC_SHORT */
+#define UATOMIC_HAS_ATOMIC_INT
+#if (CAA_BITS_PER_LONG == 64)
+#define UATOMIC_HAS_ATOMIC_LLONG
+#endif
+
+/* Must be included after the UATOMIC_HAS_ATOMIC_* defines. */
+#include <urcu/uatomic/uassert.h>
+
 #if __GNUC__ > 3 || (__GNUC__ == 3 && __GNUC_MINOR__ > 2)
 #define COMPILER_HAVE_SHORT_MEM_OPERAND
 #endif
@@ -62,7 +72,7 @@ typedef struct { char v[8]; } __hp_8;
 
 /* xchg */
 
-static inline __attribute__((always_inline))
+static inline __attribute__((__always_inline__))
 unsigned long _uatomic_exchange(volatile void *addr, unsigned long val, int len)
 {
 	switch (len) {
@@ -78,7 +88,7 @@ unsigned long _uatomic_exchange(volatile void *addr, unsigned long val, int len)
 			: "memory", "cc");
 		return old_val;
 	}
-#if (CAA_BITS_PER_LONG == 64)
+#ifdef UATOMIC_HAS_ATOMIC_LLONG
 	case 8:
 	{
 		unsigned long old_val;
@@ -92,21 +102,23 @@ unsigned long _uatomic_exchange(volatile void *addr, unsigned long val, int len)
 		return old_val;
 	}
 #endif
-	default:
-		__asm__ __volatile__(".long	0xd00d00");
 	}
 
 	return 0;
 }
 
-#define uatomic_xchg(addr, v)						    \
-	(__typeof__(*(addr))) _uatomic_exchange((addr),			    \
-						caa_cast_long_keep_sign(v), \
-						sizeof(*(addr)))
+#define uatomic_xchg_mo(addr, v, mo)						\
+	__extension__								\
+	({									\
+		_uatomic_static_assert_atomic(sizeof(*(addr)));			\
+		(__typeof__(*(addr))) _uatomic_exchange((addr),			\
+						caa_cast_long_keep_sign(v),	\
+						sizeof(*(addr)));		\
+	})
 
 /* cmpxchg */
 
-static inline __attribute__((always_inline))
+static inline __attribute__((__always_inline__))
 unsigned long _uatomic_cmpxchg(void *addr, unsigned long old,
 			       unsigned long _new, int len)
 {
@@ -122,7 +134,7 @@ unsigned long _uatomic_cmpxchg(void *addr, unsigned long old,
 			: "memory", "cc");
 		return old_val;
 	}
-#if (CAA_BITS_PER_LONG == 64)
+#ifdef UATOMIC_HAS_ATOMIC_LLONG
 	case 8:
 	{
 		__asm__ __volatile__(
@@ -133,18 +145,20 @@ unsigned long _uatomic_cmpxchg(void *addr, unsigned long old,
 		return old;
 	}
 #endif
-	default:
-		__asm__ __volatile__(".long	0xd00d00");
 	}
 
 	return 0;
 }
 
-#define uatomic_cmpxchg(addr, old, _new)				     \
-	(__typeof__(*(addr))) _uatomic_cmpxchg((addr),			     \
-					       caa_cast_long_keep_sign(old), \
-					       caa_cast_long_keep_sign(_new),\
-					       sizeof(*(addr)))
+#define uatomic_cmpxchg_mo(addr, old, _new, mos, mof)				\
+	__extension__								\
+	({									\
+		_uatomic_static_assert_atomic(sizeof(*(addr)));			\
+		(__typeof__(*(addr))) _uatomic_cmpxchg((addr),			\
+					       caa_cast_long_keep_sign(old),	\
+					       caa_cast_long_keep_sign(_new),	\
+					       sizeof(*(addr)));			\
+	})
 
 #ifdef __cplusplus
 }

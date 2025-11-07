@@ -17,6 +17,17 @@
 
 #include <urcu/config.h>
 
+/*
+ * URCU_GCC_VERSION is used to blacklist specific GCC versions with known
+ * bugs, clang also defines these macros to an equivalent GCC version it
+ * claims to support, so exclude it.
+ */
+#if defined(__GNUC__) && !defined(__clang__)
+# define URCU_GCC_VERSION	(__GNUC__ * 10000 \
+				+ __GNUC_MINOR__ * 100 \
+				+ __GNUC_PATCHLEVEL__)
+#endif
+
 #define caa_likely(x)	__builtin_expect(!!(x), 1)
 #define caa_unlikely(x)	__builtin_expect(!!(x), 0)
 
@@ -40,6 +51,43 @@
  */
 #define CMM_ACCESS_ONCE(x)	(*(__volatile__  __typeof__(x) *)&(x))
 
+/*
+ * If the toolchain support the C11 memory model, define the private macro
+ * _CMM_TOOLCHAIN_SUPPORT_C11_MM.
+ */
+#if ((defined (__cplusplus) && __cplusplus >= 201103L) ||		\
+	(defined (__STDC_VERSION__) && __STDC_VERSION__ >= 201112L))
+# define _CMM_TOOLCHAIN_SUPPORT_C11_MM
+#elif defined(CONFIG_RCU_USE_ATOMIC_BUILTINS)
+#  error "URCU was configured to use atomic builtins, but this toolchain does not support them."
+#endif
+
+#ifdef _CMM_TOOLCHAIN_SUPPORT_C11_MM
+# if defined (__cplusplus) && \
+	defined(URCU_GCC_VERSION) && (URCU_GCC_VERSION < 50100)
+/*
+ * Prior to GCC g++ 5.1 the builtin __atomic_always_lock_free() does not
+ * evaluate to a constant expression even if it is documented as such. To keep
+ * support for those older compilers, skip the check.
+ */
+#  define _cmm_static_assert__atomic_lf(size)
+# else
+/*
+ * Fail at compile time if an atomic operation is attempted on an unsupported
+ * type for the current architecture.
+ */
+#  define _cmm_static_assert__atomic_lf(size)					\
+	urcu_static_assert(__atomic_always_lock_free(size, 0),			\
+			"The architecture does not support atomic lock-free "	\
+			"operations on this type.",				\
+			_atomic_builtin_type_not_lock_free)
+# endif
+#endif
+
+/* Make the optimizer believe the variable can be manipulated arbitrarily. */
+#define _CMM_OPTIMIZER_HIDE_VAR(var)		\
+	__asm__ ("" : "+r" (var))
+
 #ifndef caa_max
 #define caa_max(a,b) ((a)>(b)?(a):(b))
 #endif
@@ -47,6 +95,9 @@
 #ifndef caa_min
 #define caa_min(a,b) ((a)<(b)?(a):(b))
 #endif
+
+#define __CAA_COMBINE_TOKENS(prefix, counter) prefix ## counter
+#define CAA_COMBINE_TOKENS(prefix, counter)   __CAA_COMBINE_TOKENS(prefix, counter)
 
 #if defined(__SIZEOF_LONG__)
 #define CAA_BITS_PER_LONG	(__SIZEOF_LONG__ * 8)
@@ -117,50 +168,13 @@
 	&& ((__GNUC__ == 4) && (__GNUC_MINOR__ >= 5)	\
 		|| __GNUC__ >= 5)
 #define CDS_DEPRECATED(msg)	\
-	__attribute__((deprecated(msg)))
+	__attribute__((__deprecated__(msg)))
 #else
 #define CDS_DEPRECATED(msg)	\
-	__attribute__((deprecated))
+	__attribute__((__deprecated__))
 #endif
 
 #define CAA_ARRAY_SIZE(x)	(sizeof(x) / sizeof((x)[0]))
-
-/*
- * URCU_GCC_VERSION is used to blacklist specific GCC versions with known
- * bugs, clang also defines these macros to an equivalent GCC version it
- * claims to support, so exclude it.
- */
-#if defined(__GNUC__) && !defined(__clang__)
-# define URCU_GCC_VERSION	(__GNUC__ * 10000 \
-				+ __GNUC_MINOR__ * 100 \
-				+ __GNUC_PATCHLEVEL__)
-#endif
-
-#ifdef __cplusplus
-#define caa_unqual_scalar_typeof(x)					\
-	std::remove_cv<std::remove_reference<decltype(x)>::type>::type
-#else
-#define caa_scalar_type_to_expr(type)					\
-	unsigned type: (unsigned type)0,				\
-	signed type: (signed type)0
-
-/*
- * Use C11 _Generic to express unqualified type from expression. This removes
- * volatile qualifier from expression type.
- */
-#define caa_unqual_scalar_typeof(x)					\
-	__typeof__(							\
-		_Generic((x),						\
-			char: (char)0,					\
-			caa_scalar_type_to_expr(char),			\
-			caa_scalar_type_to_expr(short),		\
-			caa_scalar_type_to_expr(int),			\
-			caa_scalar_type_to_expr(long),			\
-			caa_scalar_type_to_expr(long long),		\
-			default: (x)					\
-		)							\
-	)
-#endif
 
 /*
  * Allow user to manually define CMM_SANITIZE_THREAD if their toolchain is not
@@ -178,6 +192,13 @@
 
 /*
  * Helper to add the volatile qualifier to a pointer.
+ *
+ * This is used to enforce volatile accesses even when using atomic
+ * builtins. Indeed, C11 atomic operations all work on volatile memory
+ * accesses, but this is not documented for compiler atomic builtins.
+ *
+ * This could prevent certain classes of optimization from the compiler such
+ * as load/store fusing.
  */
 #if defined __cplusplus
 template <typename T>
@@ -202,27 +223,25 @@ volatile T cmm_cast_volatile(T t)
  *   static assertion. This parameter must be a valid C identifier as it will
  *   be used as a typedef name.
  */
-#ifdef __cplusplus
+#if (defined(__cplusplus) && (defined(__clang__) || (defined(URCU_GCC_VERSION) && URCU_GCC_VERSION >= 70100)))
 #define urcu_static_assert(predicate, msg, c_identifier_msg)  \
 	static_assert(predicate, msg)
-#elif defined(__STDC_VERSION__) && (__STDC_VERSION__ >= 201112L)
+#elif !defined(__cplusplus) && defined(__STDC_VERSION__) && (__STDC_VERSION__ >= 201112L)
 #define urcu_static_assert(predicate, msg, c_identifier_msg)  \
 	_Static_assert(predicate, msg)
 #else
 /*
  * Evaluates the predicate and emit a compilation error on failure.
  *
- * If the predicate evaluates to true, this macro emits a function
- * prototype with an argument type which is an array of size 0.
+ * If the predicate evaluates to true, this macro defines a struct containing
+ * a bitfield of one bit resulting in a successful compilation.
  *
- * If the predicate evaluates to false, this macro emits a function
- * prototype with an argument type which is an array of negative size
- * which is invalid in C and forces a compiler error. The
- * c_identifier_msg parameter is used as the argument identifier so it
- * is printed to the user when the error is reported.
+ * If the predicate evaluates to false, this macro defines a struct containing
+ * a bitfield of zero bit resulting in a compilation error.
  */
 #define urcu_static_assert(predicate, msg, c_identifier_msg)  \
-	void urcu_static_assert_proto(char c_identifier_msg[2*!!(predicate)-1])
+	struct CAA_COMBINE_TOKENS(urcu_assert_, __COUNTER__) \
+		{ int c_identifier_msg: !!(predicate); }
 #endif
 
 #endif /* _URCU_COMPILER_H */

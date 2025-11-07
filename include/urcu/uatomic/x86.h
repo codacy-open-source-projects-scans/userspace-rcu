@@ -20,12 +20,19 @@
 #include <urcu/compiler.h>
 #include <urcu/system.h>
 
-#define UATOMIC_HAS_ATOMIC_BYTE
-#define UATOMIC_HAS_ATOMIC_SHORT
-
 #ifdef __cplusplus
 extern "C" {
 #endif
+
+#define UATOMIC_HAS_ATOMIC_BYTE
+#define UATOMIC_HAS_ATOMIC_SHORT
+#define UATOMIC_HAS_ATOMIC_INT
+#if (CAA_BITS_PER_LONG == 64)
+#define UATOMIC_HAS_ATOMIC_LLONG
+#endif
+
+/* Must be included after the UATOMIC_HAS_ATOMIC_* defines. */
+#include <urcu/uatomic/uassert.h>
 
 /*
  * Derived from AO_compare_and_swap() and AO_test_and_set_full().
@@ -47,11 +54,9 @@ typedef struct { char v[8]; } __hp_8;
 
 #define __hp(size, x)	((__hp_##size *)(x))
 
-#define _uatomic_set(addr, v)	((void) CMM_STORE_SHARED(*(addr), (v)))
-
 /* cmpxchg */
 
-static inline __attribute__((always_inline))
+static inline __attribute__((__always_inline__))
 unsigned long __uatomic_cmpxchg(void *addr, unsigned long old,
 			      unsigned long _new, int len)
 {
@@ -89,7 +94,7 @@ unsigned long __uatomic_cmpxchg(void *addr, unsigned long old,
 			: "memory");
 		return result;
 	}
-#if (CAA_BITS_PER_LONG == 64)
+#ifdef UATOMIC_HAS_ATOMIC_LLONG
 	case 8:
 	{
 		unsigned long result = old;
@@ -103,23 +108,22 @@ unsigned long __uatomic_cmpxchg(void *addr, unsigned long old,
 	}
 #endif
 	}
-	/*
-	 * generate an illegal instruction. Cannot catch this with
-	 * linker tricks when optimizations are disabled.
-	 */
-	__asm__ __volatile__("ud2");
 	return 0;
 }
 
-#define _uatomic_cmpxchg(addr, old, _new)				      \
-	((__typeof__(*(addr))) __uatomic_cmpxchg((addr),		      \
-						caa_cast_long_keep_sign(old), \
-						caa_cast_long_keep_sign(_new),\
-						sizeof(*(addr))))
+#define _uatomic_cmpxchg(addr, old, _new)					\
+	__extension__								\
+	({									\
+		_uatomic_static_assert_atomic(sizeof(*(addr)));			\
+		(__typeof__(*(addr))) __uatomic_cmpxchg((addr),			\
+						caa_cast_long_keep_sign(old),	\
+						caa_cast_long_keep_sign(_new),	\
+						sizeof(*(addr)));		\
+	})
 
 /* xchg */
 
-static inline __attribute__((always_inline))
+static inline __attribute__((__always_inline__))
 unsigned long __uatomic_exchange(void *addr, unsigned long val, int len)
 {
 	/* Note: the "xchg" instruction does not need a "lock" prefix. */
@@ -154,7 +158,7 @@ unsigned long __uatomic_exchange(void *addr, unsigned long val, int len)
 			: "memory");
 		return result;
 	}
-#if (CAA_BITS_PER_LONG == 64)
+#ifdef UATOMIC_HAS_ATOMIC_LLONG
 	case 8:
 	{
 		unsigned long result;
@@ -167,22 +171,21 @@ unsigned long __uatomic_exchange(void *addr, unsigned long val, int len)
 	}
 #endif
 	}
-	/*
-	 * generate an illegal instruction. Cannot catch this with
-	 * linker tricks when optimizations are disabled.
-	 */
-	__asm__ __volatile__("ud2");
 	return 0;
 }
 
-#define _uatomic_xchg(addr, v)						      \
-	((__typeof__(*(addr))) __uatomic_exchange((addr),		      \
-						caa_cast_long_keep_sign(v),   \
-						sizeof(*(addr))))
+#define _uatomic_xchg(addr, v)							\
+	__extension__								\
+	({									\
+		_uatomic_static_assert_atomic(sizeof(*(addr)));			\
+		(__typeof__(*(addr))) __uatomic_exchange((addr),		\
+						caa_cast_long_keep_sign(v),	\
+						sizeof(*(addr)));		\
+	})
 
 /* uatomic_add_return */
 
-static inline __attribute__((always_inline))
+static inline __attribute__((__always_inline__))
 unsigned long __uatomic_add_return(void *addr, unsigned long val,
 				 int len)
 {
@@ -220,7 +223,7 @@ unsigned long __uatomic_add_return(void *addr, unsigned long val,
 			: "memory");
 		return result + (unsigned int)val;
 	}
-#if (CAA_BITS_PER_LONG == 64)
+#ifdef UATOMIC_HAS_ATOMIC_LLONG
 	case 8:
 	{
 		unsigned long result = val;
@@ -234,22 +237,21 @@ unsigned long __uatomic_add_return(void *addr, unsigned long val,
 	}
 #endif
 	}
-	/*
-	 * generate an illegal instruction. Cannot catch this with
-	 * linker tricks when optimizations are disabled.
-	 */
-	__asm__ __volatile__("ud2");
 	return 0;
 }
 
-#define _uatomic_add_return(addr, v)					    \
-	((__typeof__(*(addr))) __uatomic_add_return((addr),		    \
-						caa_cast_long_keep_sign(v), \
-						sizeof(*(addr))))
+#define _uatomic_add_return(addr, v)						\
+	__extension__								\
+	({									\
+		_uatomic_static_assert_atomic(sizeof(*(addr)));			\
+		(__typeof__(*(addr))) __uatomic_add_return((addr),		\
+						caa_cast_long_keep_sign(v),	\
+						sizeof(*(addr)));		\
+	})
 
 /* uatomic_and */
 
-static inline __attribute__((always_inline))
+static inline __attribute__((__always_inline__))
 void __uatomic_and(void *addr, unsigned long val, int len)
 {
 	switch (len) {
@@ -280,7 +282,7 @@ void __uatomic_and(void *addr, unsigned long val, int len)
 			: "memory");
 		return;
 	}
-#if (CAA_BITS_PER_LONG == 64)
+#ifdef UATOMIC_HAS_ATOMIC_LLONG
 	case 8:
 	{
 		__asm__ __volatile__(
@@ -292,20 +294,19 @@ void __uatomic_and(void *addr, unsigned long val, int len)
 	}
 #endif
 	}
-	/*
-	 * generate an illegal instruction. Cannot catch this with
-	 * linker tricks when optimizations are disabled.
-	 */
-	__asm__ __volatile__("ud2");
 	return;
 }
 
-#define _uatomic_and(addr, v)						   \
-	(__uatomic_and((addr), caa_cast_long_keep_sign(v), sizeof(*(addr))))
+#define _uatomic_and(addr, v)							\
+	__extension__								\
+	({									\
+		_uatomic_static_assert_atomic(sizeof(*(addr)));			\
+		__uatomic_and((addr), caa_cast_long_keep_sign(v), sizeof(*(addr)));\
+	})
 
 /* uatomic_or */
 
-static inline __attribute__((always_inline))
+static inline __attribute__((__always_inline__))
 void __uatomic_or(void *addr, unsigned long val, int len)
 {
 	switch (len) {
@@ -336,7 +337,7 @@ void __uatomic_or(void *addr, unsigned long val, int len)
 			: "memory");
 		return;
 	}
-#if (CAA_BITS_PER_LONG == 64)
+#ifdef UATOMIC_HAS_ATOMIC_LLONG
 	case 8:
 	{
 		__asm__ __volatile__(
@@ -348,20 +349,19 @@ void __uatomic_or(void *addr, unsigned long val, int len)
 	}
 #endif
 	}
-	/*
-	 * generate an illegal instruction. Cannot catch this with
-	 * linker tricks when optimizations are disabled.
-	 */
-	__asm__ __volatile__("ud2");
 	return;
 }
 
-#define _uatomic_or(addr, v)						   \
-	(__uatomic_or((addr), caa_cast_long_keep_sign(v), sizeof(*(addr))))
+#define _uatomic_or(addr, v)							\
+	__extension__								\
+	({									\
+		_uatomic_static_assert_atomic(sizeof(*(addr)));			\
+		__uatomic_or((addr), caa_cast_long_keep_sign(v), sizeof(*(addr)));\
+	})
 
 /* uatomic_add */
 
-static inline __attribute__((always_inline))
+static inline __attribute__((__always_inline__))
 void __uatomic_add(void *addr, unsigned long val, int len)
 {
 	switch (len) {
@@ -392,7 +392,7 @@ void __uatomic_add(void *addr, unsigned long val, int len)
 			: "memory");
 		return;
 	}
-#if (CAA_BITS_PER_LONG == 64)
+#ifdef UATOMIC_HAS_ATOMIC_LLONG
 	case 8:
 	{
 		__asm__ __volatile__(
@@ -404,21 +404,20 @@ void __uatomic_add(void *addr, unsigned long val, int len)
 	}
 #endif
 	}
-	/*
-	 * generate an illegal instruction. Cannot catch this with
-	 * linker tricks when optimizations are disabled.
-	 */
-	__asm__ __volatile__("ud2");
 	return;
 }
 
-#define _uatomic_add(addr, v)						   \
-	(__uatomic_add((addr), caa_cast_long_keep_sign(v), sizeof(*(addr))))
+#define _uatomic_add(addr, v)							\
+	__extension__								\
+	({									\
+		_uatomic_static_assert_atomic(sizeof(*(addr)));			\
+		__uatomic_add((addr), caa_cast_long_keep_sign(v), sizeof(*(addr)));\
+	})
 
 
 /* uatomic_inc */
 
-static inline __attribute__((always_inline))
+static inline __attribute__((__always_inline__))
 void __uatomic_inc(void *addr, int len)
 {
 	switch (len) {
@@ -449,7 +448,7 @@ void __uatomic_inc(void *addr, int len)
 			: "memory");
 		return;
 	}
-#if (CAA_BITS_PER_LONG == 64)
+#ifdef UATOMIC_HAS_ATOMIC_LLONG
 	case 8:
 	{
 		__asm__ __volatile__(
@@ -461,17 +460,19 @@ void __uatomic_inc(void *addr, int len)
 	}
 #endif
 	}
-	/* generate an illegal instruction. Cannot catch this with linker tricks
-	 * when optimizations are disabled. */
-	__asm__ __volatile__("ud2");
 	return;
 }
 
-#define _uatomic_inc(addr)	(__uatomic_inc((addr), sizeof(*(addr))))
+#define _uatomic_inc(addr)							\
+	__extension__								\
+	({									\
+		_uatomic_static_assert_atomic(sizeof(*(addr)));			\
+		__uatomic_inc((addr), sizeof(*(addr)));				\
+	})
 
 /* uatomic_dec */
 
-static inline __attribute__((always_inline))
+static inline __attribute__((__always_inline__))
 void __uatomic_dec(void *addr, int len)
 {
 	switch (len) {
@@ -502,7 +503,7 @@ void __uatomic_dec(void *addr, int len)
 			: "memory");
 		return;
 	}
-#if (CAA_BITS_PER_LONG == 64)
+#ifdef UATOMIC_HAS_ATOMIC_LLONG
 	case 8:
 	{
 		__asm__ __volatile__(
@@ -514,125 +515,51 @@ void __uatomic_dec(void *addr, int len)
 	}
 #endif
 	}
-	/*
-	 * generate an illegal instruction. Cannot catch this with
-	 * linker tricks when optimizations are disabled.
-	 */
-	__asm__ __volatile__("ud2");
 	return;
 }
 
-#define _uatomic_dec(addr)	(__uatomic_dec((addr), sizeof(*(addr))))
-
-#ifdef URCU_ARCH_X86_NO_CAS
-
-/* For backwards compat */
-#define CONFIG_RCU_COMPAT_ARCH 1
-
-extern int __rcu_cas_avail;
-extern int __rcu_cas_init(void);
-
-#define UATOMIC_COMPAT(insn)							\
-	((caa_likely(__rcu_cas_avail > 0))						\
-	? (_uatomic_##insn)							\
-		: ((caa_unlikely(__rcu_cas_avail < 0)				\
-			? ((__rcu_cas_init() > 0)				\
-				? (_uatomic_##insn)				\
-				: (compat_uatomic_##insn))			\
-			: (compat_uatomic_##insn))))
+#define _uatomic_dec(addr)							\
+	__extension__								\
+	({									\
+		_uatomic_static_assert_atomic(sizeof(*(addr)));			\
+		__uatomic_dec((addr), sizeof(*(addr)));				\
+	})
 
 /*
- * We leave the return value so we don't break the ABI, but remove the
- * return value from the API.
+ * All RMW operations have an implicit lock prefix.  Thus, ignoring memory
+ * ordering for these operations, since they can all be respected by not
+ * emitting any memory barrier.
  */
-extern unsigned long _compat_uatomic_set(void *addr,
-					 unsigned long _new, int len);
-#define compat_uatomic_set(addr, _new)				     	       \
-	((void) _compat_uatomic_set((addr),				       \
-				caa_cast_long_keep_sign(_new),		       \
-				sizeof(*(addr))))
 
+#define uatomic_cmpxchg_mo(addr, old, _new, mos, mof)		\
+		_uatomic_cmpxchg(addr, old, _new)
 
-extern unsigned long _compat_uatomic_xchg(void *addr,
-					  unsigned long _new, int len);
-#define compat_uatomic_xchg(addr, _new)					       \
-	((__typeof__(*(addr))) _compat_uatomic_xchg((addr),		       \
-						caa_cast_long_keep_sign(_new), \
-						sizeof(*(addr))))
+#define uatomic_xchg_mo(addr, v, mo)		_uatomic_xchg(addr, v)
 
-extern unsigned long _compat_uatomic_cmpxchg(void *addr, unsigned long old,
-					     unsigned long _new, int len);
-#define compat_uatomic_cmpxchg(addr, old, _new)				       \
-	((__typeof__(*(addr))) _compat_uatomic_cmpxchg((addr),		       \
-						caa_cast_long_keep_sign(old),  \
-						caa_cast_long_keep_sign(_new), \
-						sizeof(*(addr))))
-
-extern void _compat_uatomic_and(void *addr, unsigned long _new, int len);
-#define compat_uatomic_and(addr, v)				       \
-	(_compat_uatomic_and((addr),				       \
-			caa_cast_long_keep_sign(v),		       \
-			sizeof(*(addr))))
-
-extern void _compat_uatomic_or(void *addr, unsigned long _new, int len);
-#define compat_uatomic_or(addr, v)				       \
-	(_compat_uatomic_or((addr),				       \
-			  caa_cast_long_keep_sign(v),		       \
-			  sizeof(*(addr))))
-
-extern unsigned long _compat_uatomic_add_return(void *addr,
-						unsigned long _new, int len);
-#define compat_uatomic_add_return(addr, v)			            \
-	((__typeof__(*(addr))) _compat_uatomic_add_return((addr),     	    \
-						caa_cast_long_keep_sign(v), \
-						sizeof(*(addr))))
-
-#define compat_uatomic_add(addr, v)					       \
-		((void)compat_uatomic_add_return((addr), (v)))
-#define compat_uatomic_inc(addr)					       \
-		(compat_uatomic_add((addr), 1))
-#define compat_uatomic_dec(addr)					       \
-		(compat_uatomic_add((addr), -1))
-
-#else
-#define UATOMIC_COMPAT(insn)	(_uatomic_##insn)
-#endif
-
-/* Read is atomic even in compat mode */
-#define uatomic_set(addr, v)			\
-		UATOMIC_COMPAT(set(addr, v))
-
-#define uatomic_cmpxchg(addr, old, _new)	\
-		UATOMIC_COMPAT(cmpxchg(addr, old, _new))
-#define uatomic_xchg(addr, v)			\
-		UATOMIC_COMPAT(xchg(addr, v))
-
-#define uatomic_and(addr, v)		\
-		UATOMIC_COMPAT(and(addr, v))
+#define uatomic_and_mo(addr, v, mo)		_uatomic_and(addr, v)
 #define cmm_smp_mb__before_uatomic_and()	cmm_barrier()
 #define cmm_smp_mb__after_uatomic_and()		cmm_barrier()
 
-#define uatomic_or(addr, v)		\
-		UATOMIC_COMPAT(or(addr, v))
+#define uatomic_or_mo(addr, v, mo)		_uatomic_or(addr, v)
 #define cmm_smp_mb__before_uatomic_or()		cmm_barrier()
 #define cmm_smp_mb__after_uatomic_or()		cmm_barrier()
 
-#define uatomic_add_return(addr, v)		\
-		UATOMIC_COMPAT(add_return(addr, v))
+#define uatomic_add_return_mo(addr, v, mo)	_uatomic_add_return(addr, v)
 
-#define uatomic_add(addr, v)	UATOMIC_COMPAT(add(addr, v))
+#define uatomic_add_mo(addr, v, mo)		_uatomic_add(addr, v)
 #define cmm_smp_mb__before_uatomic_add()	cmm_barrier()
 #define cmm_smp_mb__after_uatomic_add()		cmm_barrier()
 
-#define uatomic_inc(addr)	UATOMIC_COMPAT(inc(addr))
+#define uatomic_inc_mo(addr, mo)		_uatomic_inc(addr)
 #define cmm_smp_mb__before_uatomic_inc()	cmm_barrier()
 #define cmm_smp_mb__after_uatomic_inc()		cmm_barrier()
 
-#define uatomic_dec(addr)	UATOMIC_COMPAT(dec(addr))
+#define uatomic_dec_mo(addr, mo)		_uatomic_dec(addr)
 #define cmm_smp_mb__before_uatomic_dec()	cmm_barrier()
 #define cmm_smp_mb__after_uatomic_dec()		cmm_barrier()
 
-static inline void _cmm_compat_c11_smp_mb__before_uatomic_read_mo(enum cmm_memorder mo)
+
+static inline void _cmm_compat_c11_smp_mb__before_uatomic_load_mo(enum cmm_memorder mo)
 {
 	/*
 	 * A SMP barrier is not necessary for CMM_SEQ_CST because, only a
@@ -660,7 +587,7 @@ static inline void _cmm_compat_c11_smp_mb__before_uatomic_read_mo(enum cmm_memor
 	}
 }
 
-static inline void _cmm_compat_c11_smp_mb__after_uatomic_read_mo(enum cmm_memorder mo)
+static inline void _cmm_compat_c11_smp_mb__after_uatomic_load_mo(enum cmm_memorder mo)
 {
 	/*
 	 * A SMP barrier is not necessary for CMM_SEQ_CST because following
@@ -691,7 +618,7 @@ static inline void _cmm_compat_c11_smp_mb__after_uatomic_read_mo(enum cmm_memord
 	}
 }
 
-static inline void _cmm_compat_c11_smp_mb__before_uatomic_set_mo(enum cmm_memorder mo)
+static inline void _cmm_compat_c11_smp_mb__before_uatomic_store_mo(enum cmm_memorder mo)
 {
 	/*
 	 * A SMP barrier is not necessary for CMM_SEQ_CST because the store can
@@ -716,7 +643,7 @@ static inline void _cmm_compat_c11_smp_mb__before_uatomic_set_mo(enum cmm_memord
 	}
 }
 
-static inline void _cmm_compat_c11_smp_mb__after_uatomic_set_mo(enum cmm_memorder mo)
+static inline void _cmm_compat_c11_smp_mb__after_uatomic_store_mo(enum cmm_memorder mo)
 {
 	/*
 	 * A SMP barrier is necessary for CMM_SEQ_CST because the store can be
@@ -749,354 +676,14 @@ static inline void _cmm_compat_c11_smp_mb__after_uatomic_set_mo(enum cmm_memorde
 	}
 }
 
-static inline void _cmm_compat_c11_smp_mb__before_uatomic_xchg_mo(enum cmm_memorder mo)
-{
-	/* NOP. uatomic_xchg has implicit lock prefix. */
-	switch (mo) {
-	case CMM_RELAXED:	/* Fall-through */
-	case CMM_ACQUIRE:	/* Fall-through */
-	case CMM_CONSUME:	/* Fall-through */
-	case CMM_RELEASE:	/* Fall-through */
-	case CMM_ACQ_REL:	/* Fall-through */
-	case CMM_SEQ_CST:	/* Fall-through */
-	case CMM_SEQ_CST_FENCE:
-		break;
-	default:
-		abort();
-	}
-}
-
-static inline void _cmm_compat_c11_smp_mb__after_uatomic_xchg_mo(enum cmm_memorder mo)
-{
-	/* NOP. uatomic_xchg has implicit lock prefix. */
-	switch (mo) {
-	case CMM_RELAXED:	/* Fall-through */
-	case CMM_ACQUIRE:	/* Fall-through */
-	case CMM_CONSUME:	/* Fall-through */
-	case CMM_RELEASE:	/* Fall-through */
-	case CMM_ACQ_REL:	/* Fall-through */
-	case CMM_SEQ_CST:	/* Fall-through */
-	case CMM_SEQ_CST_FENCE:
-		break;
-	default:
-		abort();
-	}
-}
-
-static inline void _cmm_compat_c11_smp_mb__before_uatomic_cmpxchg_mo(enum cmm_memorder mo)
-{
-	/* NOP. uatomic_cmpxchg has implicit lock prefix. */
-	switch (mo) {
-	case CMM_RELAXED:	/* Fall-through */
-	case CMM_ACQUIRE:	/* Fall-through */
-	case CMM_CONSUME:	/* Fall-through */
-	case CMM_RELEASE:	/* Fall-through */
-	case CMM_ACQ_REL:	/* Fall-through */
-	case CMM_SEQ_CST:	/* Fall-through */
-	case CMM_SEQ_CST_FENCE:
-		break;
-	default:
-		abort();
-	}
-}
-
-static inline void _cmm_compat_c11_smp_mb__after_uatomic_cmpxchg_mo(enum cmm_memorder mo)
-{
-	/* NOP. uatomic_cmpxchg has implicit lock prefix. */
-	switch (mo) {
-	case CMM_RELAXED:	/* Fall-through */
-	case CMM_ACQUIRE:	/* Fall-through */
-	case CMM_CONSUME:	/* Fall-through */
-	case CMM_RELEASE:	/* Fall-through */
-	case CMM_ACQ_REL:	/* Fall-through */
-	case CMM_SEQ_CST:	/* Fall-through */
-	case CMM_SEQ_CST_FENCE:
-		break;
-	default:
-		abort();
-	}
-}
-
-static inline void _cmm_compat_c11_smp_mb__before_uatomic_and_mo(enum cmm_memorder mo)
-{
-	/* NOP. uatomic_and has explicit lock prefix. */
-	switch (mo) {
-	case CMM_RELAXED:	/* Fall-through */
-	case CMM_ACQUIRE:	/* Fall-through */
-	case CMM_CONSUME:	/* Fall-through */
-	case CMM_RELEASE:	/* Fall-through */
-	case CMM_ACQ_REL:	/* Fall-through */
-	case CMM_SEQ_CST:	/* Fall-through */
-	case CMM_SEQ_CST_FENCE:
-		break;
-	default:
-		abort();
-	}
-}
-
-static inline void _cmm_compat_c11_smp_mb__after_uatomic_and_mo(enum cmm_memorder mo)
-{
-	/* NOP. uatomic_and has explicit lock prefix. */
-	switch (mo) {
-	case CMM_RELAXED:	/* Fall-through */
-	case CMM_ACQUIRE:	/* Fall-through */
-	case CMM_CONSUME:	/* Fall-through */
-	case CMM_RELEASE:	/* Fall-through */
-	case CMM_ACQ_REL:	/* Fall-through */
-	case CMM_SEQ_CST:	/* Fall-through */
-	case CMM_SEQ_CST_FENCE:
-		break;
-	default:
-		abort();
-	}
-}
-
-static inline void _cmm_compat_c11_smp_mb__before_uatomic_or_mo(enum cmm_memorder mo)
-{
-	/* NOP. uatomic_or has explicit lock prefix. */
-	switch (mo) {
-	case CMM_RELAXED:	/* Fall-through */
-	case CMM_ACQUIRE:	/* Fall-through */
-	case CMM_CONSUME:	/* Fall-through */
-	case CMM_RELEASE:	/* Fall-through */
-	case CMM_ACQ_REL:	/* Fall-through */
-	case CMM_SEQ_CST:	/* Fall-through */
-	case CMM_SEQ_CST_FENCE:
-		break;
-	default:
-		abort();
-	}
-}
-
-static inline void _cmm_compat_c11_smp_mb__after_uatomic_or_mo(enum cmm_memorder mo)
-{
-	/* NOP. uatomic_or has explicit lock prefix. */
-	switch (mo) {
-	case CMM_RELAXED:	/* Fall-through */
-	case CMM_ACQUIRE:	/* Fall-through */
-	case CMM_CONSUME:	/* Fall-through */
-	case CMM_RELEASE:	/* Fall-through */
-	case CMM_ACQ_REL:	/* Fall-through */
-	case CMM_SEQ_CST:	/* Fall-through */
-	case CMM_SEQ_CST_FENCE:
-		break;
-	default:
-		abort();
-	}
-}
-
-static inline void _cmm_compat_c11_smp_mb__before_uatomic_add_mo(enum cmm_memorder mo)
-{
-	/* NOP. uatomic_add has explicit lock prefix. */
-	switch (mo) {
-	case CMM_RELAXED:	/* Fall-through */
-	case CMM_ACQUIRE:	/* Fall-through */
-	case CMM_CONSUME:	/* Fall-through */
-	case CMM_RELEASE:	/* Fall-through */
-	case CMM_ACQ_REL:	/* Fall-through */
-	case CMM_SEQ_CST:	/* Fall-through */
-	case CMM_SEQ_CST_FENCE:
-		break;
-	default:
-		abort();
-	}
-}
-
-static inline void _cmm_compat_c11_smp_mb__after_uatomic_add_mo(enum cmm_memorder mo)
-{
-	/* NOP. uatomic_add has explicit lock prefix. */
-	switch (mo) {
-	case CMM_RELAXED:	/* Fall-through */
-	case CMM_ACQUIRE:	/* Fall-through */
-	case CMM_CONSUME:	/* Fall-through */
-	case CMM_RELEASE:	/* Fall-through */
-	case CMM_ACQ_REL:	/* Fall-through */
-	case CMM_SEQ_CST:	/* Fall-through */
-	case CMM_SEQ_CST_FENCE:
-		break;
-	default:
-		abort();
-	}
-}
-
-static inline void _cmm_compat_c11_smp_mb__before_uatomic_sub_mo(enum cmm_memorder mo)
-{
-	/* NOP. uatomic_sub has explicit lock prefix. */
-	switch (mo) {
-	case CMM_RELAXED:	/* Fall-through */
-	case CMM_ACQUIRE:	/* Fall-through */
-	case CMM_CONSUME:	/* Fall-through */
-	case CMM_RELEASE:	/* Fall-through */
-	case CMM_ACQ_REL:	/* Fall-through */
-	case CMM_SEQ_CST:	/* Fall-through */
-	case CMM_SEQ_CST_FENCE:
-		break;
-	default:
-		abort();
-	}
-}
-
-static inline void _cmm_compat_c11_smp_mb__after_uatomic_sub_mo(enum cmm_memorder mo)
-{
-	/* NOP. uatomic_sub has explicit lock prefix. */
-	switch (mo) {
-	case CMM_RELAXED:	/* Fall-through */
-	case CMM_ACQUIRE:	/* Fall-through */
-	case CMM_CONSUME:	/* Fall-through */
-	case CMM_RELEASE:	/* Fall-through */
-	case CMM_ACQ_REL:	/* Fall-through */
-	case CMM_SEQ_CST:	/* Fall-through */
-	case CMM_SEQ_CST_FENCE:
-		break;
-	default:
-		abort();
-	}
-}
-
-static inline void _cmm_compat_c11_smp_mb__before_uatomic_inc_mo(enum cmm_memorder mo)
-{
-	/* NOP. uatomic_inc has explicit lock prefix. */
-	switch (mo) {
-	case CMM_RELAXED:	/* Fall-through */
-	case CMM_ACQUIRE:	/* Fall-through */
-	case CMM_CONSUME:	/* Fall-through */
-	case CMM_RELEASE:	/* Fall-through */
-	case CMM_ACQ_REL:	/* Fall-through */
-	case CMM_SEQ_CST:	/* Fall-through */
-	case CMM_SEQ_CST_FENCE:
-		break;
-	default:
-		abort();
-	}
-}
-
-static inline void _cmm_compat_c11_smp_mb__after_uatomic_inc_mo(enum cmm_memorder mo)
-{
-	/* NOP. uatomic_inc has explicit lock prefix. */
-	switch (mo) {
-	case CMM_RELAXED:	/* Fall-through */
-	case CMM_ACQUIRE:	/* Fall-through */
-	case CMM_CONSUME:	/* Fall-through */
-	case CMM_RELEASE:	/* Fall-through */
-	case CMM_ACQ_REL:	/* Fall-through */
-	case CMM_SEQ_CST:	/* Fall-through */
-	case CMM_SEQ_CST_FENCE:
-		break;
-	default:
-		abort();
-	}
-}
-
-static inline void _cmm_compat_c11_smp_mb__before_uatomic_dec_mo(enum cmm_memorder mo)
-{
-	/* NOP. uatomic_dec has explicit lock prefix. */
-	switch (mo) {
-	case CMM_RELAXED:	/* Fall-through */
-	case CMM_ACQUIRE:	/* Fall-through */
-	case CMM_CONSUME:	/* Fall-through */
-	case CMM_RELEASE:	/* Fall-through */
-	case CMM_ACQ_REL:	/* Fall-through */
-	case CMM_SEQ_CST:	/* Fall-through */
-	case CMM_SEQ_CST_FENCE:
-		break;
-	default:
-		abort();
-	}
-}
-
-static inline void _cmm_compat_c11_smp_mb__after_uatomic_dec_mo(enum cmm_memorder mo)
-{
-	/* NOP. uatomic_dec has explicit lock prefix. */
-	switch (mo) {
-	case CMM_RELAXED:	/* Fall-through */
-	case CMM_ACQUIRE:	/* Fall-through */
-	case CMM_CONSUME:	/* Fall-through */
-	case CMM_RELEASE:	/* Fall-through */
-	case CMM_ACQ_REL:	/* Fall-through */
-	case CMM_SEQ_CST:	/* Fall-through */
-	case CMM_SEQ_CST_FENCE:
-		break;
-	default:
-		abort();
-	}
-}
-
-static inline void _cmm_compat_c11_smp_mb__before_uatomic_add_return_mo(enum cmm_memorder mo)
-{
-	/* NOP. uatomic_add_return has explicit lock prefix. */
-	switch (mo) {
-	case CMM_RELAXED:	/* Fall-through */
-	case CMM_ACQUIRE:	/* Fall-through */
-	case CMM_CONSUME:	/* Fall-through */
-	case CMM_RELEASE:	/* Fall-through */
-	case CMM_ACQ_REL:	/* Fall-through */
-	case CMM_SEQ_CST:	/* Fall-through */
-	case CMM_SEQ_CST_FENCE:
-		break;
-	default:
-		abort();
-	}
-}
-
-static inline void _cmm_compat_c11_smp_mb__after_uatomic_add_return_mo(enum cmm_memorder mo)
-{
-	/* NOP. uatomic_add_return has explicit lock prefix. */
-	switch (mo) {
-	case CMM_RELAXED:	/* Fall-through */
-	case CMM_ACQUIRE:	/* Fall-through */
-	case CMM_CONSUME:	/* Fall-through */
-	case CMM_RELEASE:	/* Fall-through */
-	case CMM_ACQ_REL:	/* Fall-through */
-	case CMM_SEQ_CST:	/* Fall-through */
-	case CMM_SEQ_CST_FENCE:
-		break;
-	default:
-		abort();
-	}
-}
-
-static inline void _cmm_compat_c11_smp_mb__before_uatomic_sub_return_mo(enum cmm_memorder mo)
-{
-	/* NOP. uatomic_sub_return has explicit lock prefix. */
-	switch (mo) {
-	case CMM_RELAXED:	/* Fall-through */
-	case CMM_ACQUIRE:	/* Fall-through */
-	case CMM_CONSUME:	/* Fall-through */
-	case CMM_RELEASE:	/* Fall-through */
-	case CMM_ACQ_REL:	/* Fall-through */
-	case CMM_SEQ_CST:	/* Fall-through */
-	case CMM_SEQ_CST_FENCE:
-		break;
-	default:
-		abort();
-	}
-}
-
-static inline void _cmm_compat_c11_smp_mb__after_uatomic_sub_return_mo(enum cmm_memorder mo)
-{
-	/* NOP. uatomic_sub_return has explicit lock prefix. */
-	switch (mo) {
-	case CMM_RELAXED:	/* Fall-through */
-	case CMM_ACQUIRE:	/* Fall-through */
-	case CMM_CONSUME:	/* Fall-through */
-	case CMM_RELEASE:	/* Fall-through */
-	case CMM_ACQ_REL:	/* Fall-through */
-	case CMM_SEQ_CST:	/* Fall-through */
-	case CMM_SEQ_CST_FENCE:
-		break;
-	default:
-		abort();
-	}
-}
-
-#define _cmm_compat_c11_smp_mb__before_mo(operation, mo)			\
-	do {							\
-		_cmm_compat_c11_smp_mb__before_ ## operation ## _mo (mo);	\
+#define _cmm_compat_c11_smp_mb__before_mo(operation, mo)		\
+	do {								\
+		_cmm_compat_c11_smp_mb__before_ ## operation ## _mo (mo); \
 	} while (0)
 
 #define _cmm_compat_c11_smp_mb__after_mo(operation, mo)			\
-	do {							\
-		_cmm_compat_c11_smp_mb__after_ ## operation ## _mo (mo);	\
+	do {								\
+		_cmm_compat_c11_smp_mb__after_ ## operation ## _mo (mo); \
 	} while (0)
 
 

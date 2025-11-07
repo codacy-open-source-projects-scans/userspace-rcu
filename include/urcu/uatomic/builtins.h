@@ -39,27 +39,51 @@
 # if !__has_builtin(__atomic_signal_fence)
 #  error "Toolchain does not support __atomic_signal_fence."
 # endif
-#elif defined(__GNUC__)
-# define GCC_VERSION (__GNUC__       * 10000 + \
-		       __GNUC_MINOR__ * 100   + \
-		       __GNUC_PATCHLEVEL__)
-# if  GCC_VERSION < 40700
+#elif defined(URCU_GCC_VERSION)
+# if URCU_GCC_VERSION < 40700
 #  error "GCC version is too old. Version must be 4.7 or greater"
 # endif
-# undef  GCC_VERSION
 #else
 # error "Toolchain is not supported."
 #endif
 
-#if defined(__GNUC__)
-# define UATOMIC_HAS_ATOMIC_BYTE  __GCC_ATOMIC_CHAR_LOCK_FREE
-# define UATOMIC_HAS_ATOMIC_SHORT __GCC_ATOMIC_SHORT_LOCK_FREE
-#elif defined(__clang__)
-# define UATOMIC_HAS_ATOMIC_BYTE  __CLANG_ATOMIC_CHAR_LOCK_FREE
-# define UATOMIC_HAS_ATOMIC_SHORT __CLANG_ATOMIC_SHORT_LOCK_FREE
+/*
+ * Use the compiler provided defines, a value of '2' means that the atomic
+ * operations for the type are always lock free and won't require linking with
+ * libatomic.
+ */
+#if defined(__clang__)
+# if __CLANG_ATOMIC_CHAR_LOCK_FREE == 2
+#  define UATOMIC_HAS_ATOMIC_BYTE
+# endif
+# if __CLANG_ATOMIC_SHORT_LOCK_FREE == 2
+#  define UATOMIC_HAS_ATOMIC_SHORT
+# endif
+# if __CLANG_ATOMIC_INT_LOCK_FREE == 2
+#  define UATOMIC_HAS_ATOMIC_INT
+# endif
+# if __CLANG_ATOMIC_LLONG_LOCK_FREE == 2
+#  define UATOMIC_HAS_ATOMIC_LLONG
+# endif
+#elif defined(__GNUC__)
+# if __GCC_ATOMIC_CHAR_LOCK_FREE == 2
+#  define UATOMIC_HAS_ATOMIC_BYTE
+# endif
+# if __GCC_ATOMIC_SHORT_LOCK_FREE == 2
+#  define UATOMIC_HAS_ATOMIC_SHORT
+# endif
+# if __GCC_ATOMIC_INT_LOCK_FREE == 2
+#  define UATOMIC_HAS_ATOMIC_INT
+# endif
+# if __GCC_ATOMIC_LLONG_LOCK_FREE == 2
+#  define UATOMIC_HAS_ATOMIC_LLONG
+# endif
 #else
-/* #  define UATOMIC_HAS_ATOMIC_BYTE  */
-/* #  define UATOMIC_HAS_ATOMIC_SHORT */
+# error "Toolchain is missing lock-free atomic defines."
+#endif
+
+#if defined(URCU_ARCH_X86)
+#  include <urcu/uatomic/builtins-x86.h>
 #endif
 
 #include <urcu/uatomic/builtins-generic.h>

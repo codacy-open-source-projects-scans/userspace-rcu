@@ -60,7 +60,7 @@ struct urcu_workqueue {
 	void (*worker_after_resume_fct)(struct urcu_workqueue *workqueue, void *priv);
 	void (*worker_before_wait_fct)(struct urcu_workqueue *workqueue, void *priv);
 	void (*worker_after_wake_up_fct)(struct urcu_workqueue *workqueue, void *priv);
-} __attribute__((aligned(CAA_CACHE_LINE_SIZE)));
+} __attribute__((__aligned__(CAA_CACHE_LINE_SIZE)));
 
 struct urcu_workqueue_completion {
 	int barrier_count;
@@ -107,7 +107,7 @@ static int set_thread_cpu_affinity(struct urcu_workqueue *workqueue)
 	return ret;
 }
 #else
-static int set_thread_cpu_affinity(struct urcu_workqueue *workqueue __attribute__((unused)))
+static int set_thread_cpu_affinity(struct urcu_workqueue *workqueue __attribute__((__unused__)))
 {
 	return 0;
 }
@@ -148,7 +148,7 @@ static void futex_wake_up(int32_t *futex)
 	/* Write to condition before reading/writing futex */
 	cmm_smp_mb();
 	if (caa_unlikely(uatomic_read(futex) == -1)) {
-		uatomic_set(futex, 0);
+		uatomic_store(futex, 0);
 		if (futex_async(futex, FUTEX_WAKE, 1,
 				NULL, NULL, 0) < 0)
 			urcu_die(errno);
@@ -251,7 +251,7 @@ static void *workqueue_thread(void *arg)
 		 * Read urcu_work list before write futex.
 		 */
 		cmm_smp_mb();
-		uatomic_set(&workqueue->futex, 0);
+		uatomic_store(&workqueue->futex, 0);
 	}
 	if (workqueue->finalize_worker_fct)
 		workqueue->finalize_worker_fct(workqueue, workqueue->priv);
@@ -310,7 +310,7 @@ struct urcu_workqueue *urcu_workqueue_create(unsigned long flags,
 
 static void wake_worker_thread(struct urcu_workqueue *workqueue)
 {
-	if (!(_CMM_LOAD_SHARED(workqueue->flags) & URCU_WORKQUEUE_RT))
+	if (!(uatomic_load(&workqueue->flags) & URCU_WORKQUEUE_RT))
 		futex_wake_up(&workqueue->futex);
 }
 

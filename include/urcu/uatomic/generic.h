@@ -6,6 +6,11 @@
 //
 // SPDX-License-Identifier: LicenseRef-Boehm-GC
 
+/*
+ * Generic uatomic implementation based on GCC __sync built-in functions or the
+ * newer __atomic built-ins if the compiler supports C11.
+ */
+
 #ifndef _URCU_UATOMIC_GENERIC_H
 #define _URCU_UATOMIC_GENERIC_H
 
@@ -15,15 +20,14 @@
  */
 
 #include <stdint.h>
+#include <stdlib.h>
+
 #include <urcu/compiler.h>
 #include <urcu/system.h>
+#include <urcu/uatomic/uassert.h>
 
 #ifdef __cplusplus
 extern "C" {
-#endif
-
-#ifndef uatomic_set
-#define uatomic_set(addr, v)	((void) CMM_STORE_SHARED(*(addr), (v)))
 #endif
 
 /*
@@ -32,8 +36,27 @@ extern "C" {
  * What needs to be emitted _before_ the `operation' with memory ordering `mo'.
  */
 #ifndef _cmm_compat_c11_smp_mb__before_mo
-# define _cmm_compat_c11_smp_mb__before_mo(operation, mo) cmm_smp_mb()
-#endif
+# define _cmm_compat_c11_smp_mb__before_mo(operation, mo)	\
+	do {							\
+		switch (mo) {					\
+		case CMM_SEQ_CST_FENCE:				\
+		case CMM_SEQ_CST:				\
+		case CMM_ACQ_REL:				\
+		case CMM_RELEASE:				\
+			cmm_smp_mb();				\
+			break;					\
+		case CMM_ACQUIRE:				\
+		case CMM_CONSUME:				\
+		case CMM_RELAXED:				\
+			break;					\
+		default:					\
+			abort();				\
+			break;					\
+								\
+		}						\
+	} while(0)
+
+#endif	/* _cmm_compat_c11_smp_mb__before_mo */
 
 /*
  * Can be defined for the architecture.
@@ -41,119 +64,96 @@ extern "C" {
  * What needs to be emitted _after_ the `operation' with memory ordering `mo'.
  */
 #ifndef _cmm_compat_c11_smp_mb__after_mo
-# define _cmm_compat_c11_smp_mb__after_mo(operation, mo) cmm_smp_mb()
-#endif
-
-#define uatomic_load_store_return_op(op, addr, v, mo)		\
-	__extension__						\
-	({							\
-		_cmm_compat_c11_smp_mb__before_mo(op, mo);	\
-		__typeof__((*addr)) _value = op(addr, v);	\
-		_cmm_compat_c11_smp_mb__after_mo(op, mo);	\
-								\
-		_value;						\
-	})
-
-#define uatomic_load_store_op(op, addr, v, mo)			\
+# define _cmm_compat_c11_smp_mb__after_mo(operation, mo)	\
 	do {							\
-		_cmm_compat_c11_smp_mb__before_mo(op, mo);	\
-		op(addr, v);					\
-		_cmm_compat_c11_smp_mb__after_mo(op, mo);	\
-	} while (0)
+		switch (mo) {					\
+		case CMM_SEQ_CST_FENCE:				\
+		case CMM_SEQ_CST:				\
+		case CMM_ACQUIRE:				\
+		case CMM_CONSUME:				\
+		case CMM_ACQ_REL:				\
+			cmm_smp_mb();				\
+			break;					\
+		case CMM_RELEASE:				\
+		case CMM_RELAXED:				\
+			break;					\
+		default:					\
+			abort();				\
+			break;					\
+								\
+		}						\
+	} while(0)
+#endif /* _cmm_compat_c11_smp_mb__after_mo */
 
-#define uatomic_store(addr, v, mo)					\
-	do {								\
-		_cmm_compat_c11_smp_mb__before_mo(uatomic_set, mo);	\
-		uatomic_set(addr, v);					\
-		_cmm_compat_c11_smp_mb__after_mo(uatomic_set, mo);	\
-	} while (0)
-
-#define uatomic_and_mo(addr, v, mo)			\
-	uatomic_load_store_op(uatomic_and, addr, v, mo)
-
-#define uatomic_or_mo(addr, v, mo)			\
-	uatomic_load_store_op(uatomic_or, addr, v, mo)
-
-#define uatomic_add_mo(addr, v, mo)			\
-	uatomic_load_store_op(uatomic_add, addr, v, mo)
-
-#define uatomic_sub_mo(addr, v, mo)			\
-	uatomic_load_store_op(uatomic_sub, addr, v, mo)
-
-#define uatomic_inc_mo(addr, mo)			\
-	uatomic_load_store_op(uatomic_add, addr, 1, mo)
-
-#define uatomic_dec_mo(addr, mo)				\
-	uatomic_load_store_op(uatomic_add, addr, -1, mo)
 /*
- * NOTE: We can not just do switch (_value == (old) ? mos : mof) otherwise the
- * compiler emit a -Wduplicated-cond warning.
+ * If the toolchain supports the C11 memory model, then it is safe to implement
+ * `uatomic_store_mo()' in term of __atomic builtins.  This has the effect of
+ * reducing the number of emitted memory barriers except for the
+ * CMM_SEQ_CST_FENCE memory order.
  */
-#define uatomic_cmpxchg_mo(addr, old, new, mos, mof)			\
+#ifndef uatomic_store_mo
+#  ifdef _CMM_TOOLCHAIN_SUPPORT_C11_MM
+#    define uatomic_store_mo(addr, v, mo)			\
+	do {							\
+		_cmm_static_assert__atomic_lf(sizeof(*(addr)));	\
+		__atomic_store_n(cmm_cast_volatile(addr), v,	\
+				cmm_to_c11(mo));		\
+		cmm_seq_cst_fence_after_atomic(mo);		\
+	} while (0)
+#  else
+#    define uatomic_store_mo(addr, v, mo)				\
+	do {								\
+		_uatomic_static_assert_atomic(sizeof(*(addr)));		\
+		_cmm_compat_c11_smp_mb__before_mo(uatomic_store, mo);	\
+		(void) CMM_STORE_SHARED(*(addr), v);			\
+		_cmm_compat_c11_smp_mb__after_mo(uatomic_store, mo);	\
+	} while (0)
+#  endif  /* _CMM_TOOLCHAIN_SUPPORT_C11_MM */
+#endif	/* !uatomic_store */
+
+/*
+ * If the toolchain supports the C11 memory model, then it is safe to implement
+ * `uatomic_load_mo()' in term of __atomic builtins.  This has the effect of
+ * reducing the number of emitted memory barriers except for the
+ * CMM_SEQ_CST_FENCE memory order.
+ */
+#ifndef uatomic_load_mo
+#  ifdef _CMM_TOOLCHAIN_SUPPORT_C11_MM
+#    define uatomic_load_mo(addr, mo)					\
 	__extension__							\
 	({								\
-		_cmm_compat_c11_smp_mb__before_mo(uatomic_cmpxchg, mos); \
-		__typeof__(*(addr)) _value = uatomic_cmpxchg(addr, old,	\
-							new);		\
+		_cmm_static_assert__atomic_lf(sizeof(*(addr)));		\
+		__typeof__(*(addr)) _value =				\
+			__atomic_load_n(cmm_cast_volatile(addr),	\
+					cmm_to_c11(mo));		\
+		cmm_seq_cst_fence_after_atomic(mo);			\
 									\
-		if (_value == (old)) {					\
-			_cmm_compat_c11_smp_mb__after_mo(uatomic_cmpxchg, mos);	\
-		} else {						\
-			_cmm_compat_c11_smp_mb__after_mo(uatomic_cmpxchg, mof);	\
-		}							\
 		_value;							\
 	})
-
-#define uatomic_xchg_mo(addr, v, mo)				\
-	uatomic_load_store_return_op(uatomic_xchg, addr, v, mo)
-
-#define uatomic_add_return_mo(addr, v, mo)				\
-	uatomic_load_store_return_op(uatomic_add_return, addr, v)
-
-#define uatomic_sub_return_mo(addr, v, mo)				\
-	uatomic_load_store_return_op(uatomic_sub_return, addr, v)
-
-#ifndef uatomic_read
-#define uatomic_read(addr)	CMM_LOAD_SHARED(*(addr))
-#endif
-
-#define uatomic_load(addr, mo)						\
+#  else
+#    define uatomic_load_mo(addr, mo)					\
 	__extension__							\
 	({								\
-		_cmm_compat_c11_smp_mb__before_mo(uatomic_read, mo);	\
-		__typeof__(*(addr)) _rcu_value = uatomic_read(addr);	\
-		_cmm_compat_c11_smp_mb__after_mo(uatomic_read, mo);	\
+		_uatomic_static_assert_atomic(sizeof(*(addr)));		\
+		_cmm_compat_c11_smp_mb__before_mo(uatomic_load, mo);	\
+		__typeof__(*(addr)) _rcu_value = CMM_LOAD_SHARED(*(addr)); \
+		_cmm_compat_c11_smp_mb__after_mo(uatomic_load, mo);	\
 									\
 		_rcu_value;						\
 	})
+#  endif  /* _CMM_TOOLCHAIN_SUPPORT_C11_MM */
+#endif	/* !uatomic_load */
 
-#if !defined __OPTIMIZE__  || defined UATOMIC_NO_LINK_ERROR
-#ifdef ILLEGAL_INSTR
-static inline __attribute__((always_inline))
-void _uatomic_link_error(void)
-{
-	/*
-	 * generate an illegal instruction. Cannot catch this with
-	 * linker tricks when optimizations are disabled.
-	 */
-	__asm__ __volatile__(ILLEGAL_INSTR);
-}
-#else
-static inline __attribute__((always_inline, __noreturn__))
-void _uatomic_link_error(void)
-{
-	__builtin_trap();
-}
-#endif
+/*
+ * NOTE: All RMW operations are implemented using the `__sync' builtins.  All
+ * builtins used are documented to be considered a "full barrier".  Therefore,
+ * for RMW operations, nothing is emitted for any memory order.
+ */
 
-#else /* #if !defined __OPTIMIZE__  || defined UATOMIC_NO_LINK_ERROR */
-extern void _uatomic_link_error(void);
-#endif /* #else #if !defined __OPTIMIZE__  || defined UATOMIC_NO_LINK_ERROR */
+/* uatomic_cmpxchg_mo */
 
-/* cmpxchg */
-
-#ifndef uatomic_cmpxchg
-static inline __attribute__((always_inline))
+#ifndef uatomic_cmpxchg_mo
+static inline __attribute__((__always_inline__))
 unsigned long _uatomic_cmpxchg(void *addr, unsigned long old,
 			      unsigned long _new, int len)
 {
@@ -168,31 +168,34 @@ unsigned long _uatomic_cmpxchg(void *addr, unsigned long old,
 		return __sync_val_compare_and_swap_2((uint16_t *) addr, old,
 				_new);
 #endif
+#ifdef UATOMIC_HAS_ATOMIC_INT
 	case 4:
 		return __sync_val_compare_and_swap_4((uint32_t *) addr, old,
 				_new);
-#if (CAA_BITS_PER_LONG == 64)
+#endif
+#ifdef UATOMIC_HAS_ATOMIC_LLONG
 	case 8:
 		return __sync_val_compare_and_swap_8((uint64_t *) addr, old,
 				_new);
 #endif
 	}
-	_uatomic_link_error();
 	return 0;
 }
 
+#define uatomic_cmpxchg_mo(addr, old, _new, mos, mof)			\
+	__extension__							\
+	({								\
+		_uatomic_static_assert_atomic(sizeof(*(addr)));		\
+		(__typeof__(*(addr))) _uatomic_cmpxchg((addr),		\
+					caa_cast_long_keep_sign(old),	\
+					caa_cast_long_keep_sign(_new),	\
+					sizeof(*(addr)));		\
+	})
 
-#define uatomic_cmpxchg(addr, old, _new)				      \
-	((__typeof__(*(addr))) _uatomic_cmpxchg((addr),			      \
-						caa_cast_long_keep_sign(old), \
-						caa_cast_long_keep_sign(_new),\
-						sizeof(*(addr))))
+/* uatomic_and_mo */
 
-
-/* uatomic_and */
-
-#ifndef uatomic_and
-static inline __attribute__((always_inline))
+#ifndef uatomic_and_mo
+static inline __attribute__((__always_inline__))
 void _uatomic_and(void *addr, unsigned long val,
 		  int len)
 {
@@ -207,31 +210,37 @@ void _uatomic_and(void *addr, unsigned long val,
 		__sync_and_and_fetch_2((uint16_t *) addr, val);
 		return;
 #endif
+#ifdef UATOMIC_HAS_ATOMIC_INT
 	case 4:
 		__sync_and_and_fetch_4((uint32_t *) addr, val);
 		return;
-#if (CAA_BITS_PER_LONG == 64)
+#endif
+#ifdef UATOMIC_HAS_ATOMIC_LLONG
 	case 8:
 		__sync_and_and_fetch_8((uint64_t *) addr, val);
 		return;
 #endif
 	}
-	_uatomic_link_error();
 }
 
-#define uatomic_and(addr, v)			\
-	(_uatomic_and((addr),			\
-		caa_cast_long_keep_sign(v),	\
-		sizeof(*(addr))))
+#define uatomic_and_mo(addr, v, mo)					\
+	__extension__							\
+	({								\
+		_uatomic_static_assert_atomic(sizeof(*(addr)));		\
+		_uatomic_and((addr),					\
+				caa_cast_long_keep_sign(v),		\
+				sizeof(*(addr)));			\
+	})
+
 #define cmm_smp_mb__before_uatomic_and()	cmm_barrier()
 #define cmm_smp_mb__after_uatomic_and()		cmm_barrier()
 
 #endif
 
-/* uatomic_or */
+/* uatomic_or_mo */
 
-#ifndef uatomic_or
-static inline __attribute__((always_inline))
+#ifndef uatomic_or_mo
+static inline __attribute__((__always_inline__))
 void _uatomic_or(void *addr, unsigned long val,
 		 int len)
 {
@@ -246,33 +255,39 @@ void _uatomic_or(void *addr, unsigned long val,
 		__sync_or_and_fetch_2((uint16_t *) addr, val);
 		return;
 #endif
+#ifdef UATOMIC_HAS_ATOMIC_INT
 	case 4:
 		__sync_or_and_fetch_4((uint32_t *) addr, val);
 		return;
-#if (CAA_BITS_PER_LONG == 64)
+#endif
+#ifdef UATOMIC_HAS_ATOMIC_LLONG
 	case 8:
 		__sync_or_and_fetch_8((uint64_t *) addr, val);
 		return;
 #endif
 	}
-	_uatomic_link_error();
 	return;
 }
 
-#define uatomic_or(addr, v)			\
-	(_uatomic_or((addr),			\
-		caa_cast_long_keep_sign(v),	\
-		sizeof(*(addr))))
+#define uatomic_or_mo(addr, v, mo)					\
+	__extension__							\
+	({								\
+		_uatomic_static_assert_atomic(sizeof(*(addr)));		\
+		_uatomic_or((addr),					\
+				caa_cast_long_keep_sign(v),		\
+				sizeof(*(addr)));			\
+	})
+
 #define cmm_smp_mb__before_uatomic_or()		cmm_barrier()
 #define cmm_smp_mb__after_uatomic_or()		cmm_barrier()
 
 #endif
 
 
-/* uatomic_add_return */
+/* uatomic_add_return_mo */
 
-#ifndef uatomic_add_return
-static inline __attribute__((always_inline))
+#ifndef uatomic_add_return_mo
+static inline __attribute__((__always_inline__))
 unsigned long _uatomic_add_return(void *addr, unsigned long val,
 				 int len)
 {
@@ -285,28 +300,34 @@ unsigned long _uatomic_add_return(void *addr, unsigned long val,
 	case 2:
 		return __sync_add_and_fetch_2((uint16_t *) addr, val);
 #endif
+#ifdef UATOMIC_HAS_ATOMIC_INT
 	case 4:
 		return __sync_add_and_fetch_4((uint32_t *) addr, val);
-#if (CAA_BITS_PER_LONG == 64)
+#endif
+#ifdef UATOMIC_HAS_ATOMIC_LLONG
 	case 8:
 		return __sync_add_and_fetch_8((uint64_t *) addr, val);
 #endif
 	}
-	_uatomic_link_error();
 	return 0;
 }
 
 
-#define uatomic_add_return(addr, v)					    \
-	((__typeof__(*(addr))) _uatomic_add_return((addr),		    \
-						caa_cast_long_keep_sign(v), \
-						sizeof(*(addr))))
+#define uatomic_add_return_mo(addr, v, mo)				\
+	__extension__							\
+	({								\
+		_uatomic_static_assert_atomic(sizeof(*(addr)));		\
+		(__typeof__(*(addr))) _uatomic_add_return((addr),	\
+					caa_cast_long_keep_sign(v),	\
+					sizeof(*(addr)));		\
+	})
+
 #endif /* #ifndef uatomic_add_return */
 
-#ifndef uatomic_xchg
+#ifndef uatomic_xchg_mo
 /* xchg */
 
-static inline __attribute__((always_inline))
+static inline __attribute__((__always_inline__))
 unsigned long _uatomic_exchange(void *addr, unsigned long val, int len)
 {
 	switch (len) {
@@ -336,6 +357,7 @@ unsigned long _uatomic_exchange(void *addr, unsigned long val, int len)
 		return old;
 	}
 #endif
+#ifdef UATOMIC_HAS_ATOMIC_INT
 	case 4:
 	{
 		uint32_t old;
@@ -347,7 +369,8 @@ unsigned long _uatomic_exchange(void *addr, unsigned long val, int len)
 
 		return old;
 	}
-#if (CAA_BITS_PER_LONG == 64)
+#endif
+#ifdef UATOMIC_HAS_ATOMIC_LLONG
 	case 8:
 	{
 		uint64_t old;
@@ -361,22 +384,26 @@ unsigned long _uatomic_exchange(void *addr, unsigned long val, int len)
 	}
 #endif
 	}
-	_uatomic_link_error();
 	return 0;
 }
 
-#define uatomic_xchg(addr, v)						    \
-	((__typeof__(*(addr))) _uatomic_exchange((addr),		    \
-						caa_cast_long_keep_sign(v), \
-						sizeof(*(addr))))
-#endif /* #ifndef uatomic_xchg */
+#define uatomic_xchg_mo(addr, v, mo)					\
+	__extension__							\
+	({								\
+		_uatomic_static_assert_atomic(sizeof(*(addr)));		\
+		(__typeof__(*(addr))) _uatomic_exchange((addr),		\
+					caa_cast_long_keep_sign(v),	\
+					sizeof(*(addr)));		\
+	})
 
-#else /* #ifndef uatomic_cmpxchg */
+#endif /* #ifndef uatomic_xchg_mo */
 
-#ifndef uatomic_and
-/* uatomic_and */
+#else /* #ifndef uatomic_cmpxchg_mo */
 
-static inline __attribute__((always_inline))
+#ifndef uatomic_and_mo
+/* uatomic_and_mo */
+
+static inline __attribute__((__always_inline__))
 void _uatomic_and(void *addr, unsigned long val, int len)
 {
 	switch (len) {
@@ -406,6 +433,7 @@ void _uatomic_and(void *addr, unsigned long val, int len)
 		} while (oldt != old);
 	}
 #endif
+#ifdef UATOMIC_HAS_ATOMIC_INT
 	case 4:
 	{
 		uint32_t old, oldt;
@@ -418,7 +446,8 @@ void _uatomic_and(void *addr, unsigned long val, int len)
 
 		return;
 	}
-#if (CAA_BITS_PER_LONG == 64)
+#endif
+#ifdef UATOMIC_HAS_ATOMIC_LLONG
 	case 8:
 	{
 		uint64_t old, oldt;
@@ -433,22 +462,26 @@ void _uatomic_and(void *addr, unsigned long val, int len)
 	}
 #endif
 	}
-	_uatomic_link_error();
 }
 
-#define uatomic_and(addr, v)			\
-	(_uatomic_and((addr),			\
-		caa_cast_long_keep_sign(v),	\
-		sizeof(*(addr))))
+#define uatomic_and_mo(addr, v, mo)					\
+	__extension__							\
+	({								\
+		_uatomic_static_assert_atomic(sizeof(*(addr)));		\
+		_uatomic_and((addr),					\
+				caa_cast_long_keep_sign(v),		\
+				sizeof(*(addr)));			\
+	})
+
 #define cmm_smp_mb__before_uatomic_and()	cmm_barrier()
 #define cmm_smp_mb__after_uatomic_and()		cmm_barrier()
 
-#endif /* #ifndef uatomic_and */
+#endif /* #ifndef uatomic_and_mo */
 
-#ifndef uatomic_or
-/* uatomic_or */
+#ifndef uatomic_or_mo
+/* uatomic_or_mo */
 
-static inline __attribute__((always_inline))
+static inline __attribute__((__always_inline__))
 void _uatomic_or(void *addr, unsigned long val, int len)
 {
 	switch (len) {
@@ -480,6 +513,7 @@ void _uatomic_or(void *addr, unsigned long val, int len)
 		return;
 	}
 #endif
+#ifdef UATOMIC_HAS_ATOMIC_INT
 	case 4:
 	{
 		uint32_t old, oldt;
@@ -492,7 +526,8 @@ void _uatomic_or(void *addr, unsigned long val, int len)
 
 		return;
 	}
-#if (CAA_BITS_PER_LONG == 64)
+#endif
+#ifdef UATOMIC_HAS_ATOMIC_LLONG
 	case 8:
 	{
 		uint64_t old, oldt;
@@ -507,22 +542,26 @@ void _uatomic_or(void *addr, unsigned long val, int len)
 	}
 #endif
 	}
-	_uatomic_link_error();
 }
 
-#define uatomic_or(addr, v)			\
-	(_uatomic_or((addr),			\
-		caa_cast_long_keep_sign(v),	\
-		sizeof(*(addr))))
+#define uatomic_or_mo(addr, v, mo)					\
+	__extension__							\
+	({								\
+		_uatomic_static_assert_atomic(sizeof(*(addr)));		\
+		_uatomic_or((addr),					\
+				caa_cast_long_keep_sign(v),		\
+				sizeof(*(addr)));			\
+	})
+
 #define cmm_smp_mb__before_uatomic_or()		cmm_barrier()
 #define cmm_smp_mb__after_uatomic_or()		cmm_barrier()
 
-#endif /* #ifndef uatomic_or */
+#endif /* #ifndef uatomic_or_mo */
 
-#ifndef uatomic_add_return
-/* uatomic_add_return */
+#ifndef uatomic_add_return_mo
+/* uatomic_add_return_mo */
 
-static inline __attribute__((always_inline))
+static inline __attribute__((__always_inline__))
 unsigned long _uatomic_add_return(void *addr, unsigned long val, int len)
 {
 	switch (len) {
@@ -556,6 +595,7 @@ unsigned long _uatomic_add_return(void *addr, unsigned long val, int len)
 		return old + val;
 	}
 #endif
+#ifdef UATOMIC_HAS_ATOMIC_INT
 	case 4:
 	{
 		uint32_t old, oldt;
@@ -569,7 +609,8 @@ unsigned long _uatomic_add_return(void *addr, unsigned long val, int len)
 
 		return old + val;
 	}
-#if (CAA_BITS_PER_LONG == 64)
+#endif
+#ifdef UATOMIC_HAS_ATOMIC_LLONG
 	case 8:
 	{
 		uint64_t old, oldt;
@@ -585,20 +626,24 @@ unsigned long _uatomic_add_return(void *addr, unsigned long val, int len)
 	}
 #endif
 	}
-	_uatomic_link_error();
 	return 0;
 }
 
-#define uatomic_add_return(addr, v)					    \
-	((__typeof__(*(addr))) _uatomic_add_return((addr),		    \
-						caa_cast_long_keep_sign(v), \
-						sizeof(*(addr))))
-#endif /* #ifndef uatomic_add_return */
+#define uatomic_add_return_mo(addr, v, mo)				\
+	__extension__							\
+	({								\
+		_uatomic_static_assert_atomic(sizeof(*(addr)));		\
+		(__typeof__(*(addr))) _uatomic_add_return((addr),	\
+					caa_cast_long_keep_sign(v),	\
+					sizeof(*(addr)));		\
+	 })
 
-#ifndef uatomic_xchg
-/* xchg */
+#endif /* #ifndef uatomic_add_return_mo */
 
-static inline __attribute__((always_inline))
+#ifndef uatomic_xchg_mo
+/* uatomic_xchg_mo */
+
+static inline __attribute__((__always_inline__))
 unsigned long _uatomic_exchange(void *addr, unsigned long val, int len)
 {
 	switch (len) {
@@ -632,6 +677,7 @@ unsigned long _uatomic_exchange(void *addr, unsigned long val, int len)
 		return old;
 	}
 #endif
+#ifdef UATOMIC_HAS_ATOMIC_INT
 	case 4:
 	{
 		uint32_t old, oldt;
@@ -645,7 +691,8 @@ unsigned long _uatomic_exchange(void *addr, unsigned long val, int len)
 
 		return old;
 	}
-#if (CAA_BITS_PER_LONG == 64)
+#endif
+#ifdef UATOMIC_HAS_ATOMIC_LLONG
 	case 8:
 	{
 		uint64_t old, oldt;
@@ -661,41 +708,45 @@ unsigned long _uatomic_exchange(void *addr, unsigned long val, int len)
 	}
 #endif
 	}
-	_uatomic_link_error();
 	return 0;
 }
 
-#define uatomic_xchg(addr, v)						    \
-	((__typeof__(*(addr))) _uatomic_exchange((addr),		    \
-						caa_cast_long_keep_sign(v), \
-						sizeof(*(addr))))
-#endif /* #ifndef uatomic_xchg */
+#define uatomic_xchg_mo(addr, v, mo)					\
+	__extension__							\
+	({								\
+		_uatomic_static_assert_atomic(sizeof(*(addr)));		\
+		(__typeof__(*(addr))) _uatomic_exchange((addr),		\
+					caa_cast_long_keep_sign(v), 	\
+					sizeof(*(addr)));		\
+	})
 
-#endif /* #else #ifndef uatomic_cmpxchg */
+#endif /* #ifndef uatomic_xchg_mo */
 
-/* uatomic_sub_return, uatomic_add, uatomic_sub, uatomic_inc, uatomic_dec */
+#endif /* #else #ifndef uatomic_cmpxchg_mo */
 
-#ifndef uatomic_add
-#define uatomic_add(addr, v)		(void)uatomic_add_return((addr), (v))
+/* uatomic_sub_return_mo, uatomic_add_mo, uatomic_sub_mo, uatomic_inc_mo, uatomic_dec_mo */
+
+#ifndef uatomic_add_mo
+#define uatomic_add_mo(addr, v, mo)		(void)uatomic_add_return_mo((addr), (v), mo)
 #define cmm_smp_mb__before_uatomic_add()	cmm_barrier()
 #define cmm_smp_mb__after_uatomic_add()		cmm_barrier()
 #endif
 
-#define uatomic_sub_return(addr, v)	\
-	uatomic_add_return((addr), -(caa_cast_long_keep_sign(v)))
-#define uatomic_sub(addr, v)		\
-	uatomic_add((addr), -(caa_cast_long_keep_sign(v)))
+#define uatomic_sub_return_mo(addr, v, mo)				\
+	uatomic_add_return_mo((addr), -(caa_cast_long_keep_sign(v)), mo)
+#define uatomic_sub_mo(addr, v, mo)					\
+	uatomic_add_mo((addr), -(caa_cast_long_keep_sign(v)), mo)
 #define cmm_smp_mb__before_uatomic_sub()	cmm_smp_mb__before_uatomic_add()
 #define cmm_smp_mb__after_uatomic_sub()		cmm_smp_mb__after_uatomic_add()
 
-#ifndef uatomic_inc
-#define uatomic_inc(addr)		uatomic_add((addr), 1)
+#ifndef uatomic_inc_mo
+#define uatomic_inc_mo(addr, mo)		uatomic_add_mo((addr), 1, mo)
 #define cmm_smp_mb__before_uatomic_inc()	cmm_smp_mb__before_uatomic_add()
 #define cmm_smp_mb__after_uatomic_inc()		cmm_smp_mb__after_uatomic_add()
 #endif
 
-#ifndef uatomic_dec
-#define uatomic_dec(addr)		uatomic_add((addr), -1)
+#ifndef uatomic_dec_mo
+#define uatomic_dec_mo(addr, mo)		uatomic_add((addr), -1, mo)
 #define cmm_smp_mb__before_uatomic_dec()	cmm_smp_mb__before_uatomic_add()
 #define cmm_smp_mb__after_uatomic_dec()		cmm_smp_mb__after_uatomic_add()
 #endif
