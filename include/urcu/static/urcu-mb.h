@@ -20,6 +20,7 @@
 #include <unistd.h>
 #include <stdint.h>
 
+#include <urcu/annotate.h>
 #include <urcu/debug.h>
 #include <urcu/config.h>
 #include <urcu/compiler.h>
@@ -51,14 +52,18 @@ extern DECLARE_URCU_TLS(struct urcu_reader, urcu_mb_reader);
  * Helper for _urcu_mb_read_lock().  The format of urcu_mb_gp.ctr (as well as
  * the per-thread rcu_reader.ctr) has the lower-order bits containing a count of
  * _urcu_mb_read_lock() nesting, and a single high-order URCU_BP_GP_CTR_PHASE bit
- * that contains either zero or one.  The cmm_smp_mb() ensures that the accesses in
- * _urcu_mb_read_lock() happen before the subsequent read-side critical section.
+ * that contains either zero or one.  The CMM_SEQ_CST_FENCE store to
+ * rcu_reader.ctr ensures that the accesses in _urcu_mb_read_lock() happen before
+ * the subsequent read-side critical section.
  */
 static inline void _urcu_mb_read_lock_update(unsigned long tmp)
 {
 	if (caa_likely(!(tmp & URCU_GP_CTR_NEST_MASK))) {
-		uatomic_store(&URCU_TLS(urcu_mb_reader).ctr, uatomic_load(&urcu_mb_gp.ctr));
-		cmm_smp_mb();
+		unsigned long *pgctr = &urcu_mb_gp.ctr;
+		unsigned long gctr = uatomic_load(pgctr);
+
+		cmm_annotate_mem_acquire(pgctr);
+		uatomic_store(&URCU_TLS(urcu_mb_reader).ctr, gctr, CMM_SEQ_CST_FENCE);
 	} else
 		uatomic_store(&URCU_TLS(urcu_mb_reader).ctr, tmp + URCU_GP_COUNT);
 }
@@ -87,17 +92,18 @@ static inline void _urcu_mb_read_lock(void)
 /*
  * This is a helper function for _urcu_mb_read_unlock().
  *
- * The first cmm_smp_mb() call ensures that the critical section is
- * seen to precede the store to rcu_reader.ctr.
- * The second cmm_smp_mb() call ensures that we write to rcu_reader.ctr
- * before reading the update-side futex.
+ * The seq-cst-fence store on rcu_reader.ctr acts as a store-release and
+ * ensures that the critical section is seen to precede the store to
+ * rcu_reader.ctr.
+ * The seq-cst-fence store on rcu_reader.ctr ensures that the store to
+ * rcu_reader.ctr is before the load relaxed of the update-side futex.
  */
 static inline void _urcu_mb_read_unlock_update_and_wakeup(unsigned long tmp)
 {
 	unsigned long *ctr = &URCU_TLS(urcu_mb_reader).ctr;
 
 	if (caa_likely((tmp & URCU_GP_CTR_NEST_MASK) == URCU_GP_COUNT)) {
-		uatomic_store(ctr, tmp - URCU_GP_COUNT, CMM_SEQ_CST);
+		uatomic_store(ctr, tmp - URCU_GP_COUNT, CMM_SEQ_CST_FENCE);
 		urcu_common_wake_up_gp(&urcu_mb_gp);
 	} else {
 		uatomic_store(ctr, tmp - URCU_GP_COUNT);
